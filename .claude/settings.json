@@ -1,0 +1,29 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "bd prime --hook-json",
+            "type": "command"
+          }
+        ],
+        "matcher": ""
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(awk 'NR%1600==0' api.txt)",
+      "Bash(awk '{ print length }' api.txt)",
+      "Bash(awk '{a[NR]=$1} END{print \"min=\"a[1]; print \"median=\"a[int\\(NR/2\\)]; print \"p90=\"a[int\\(NR*0.9\\)]; print \"max=\"a[NR]}')",
+      "Bash(command -v bd)",
+      "Bash(bd version *)",
+      "Bash(command -v jython)",
+      "Bash(command -v java)",
+      "Bash(java -version)",
+      "Bash(command -v python3)",
+      "Bash(command -v python2)"
+    ]
+  }
+}
