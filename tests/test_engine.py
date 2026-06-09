@@ -444,5 +444,155 @@ class TestDictionaryMatching(unittest.TestCase):
         self.assertIn('repos/{id}/commits', templates)
 
 
+# ---------------------------------------------------------------------------
+# Phase 2: Secret FP gate tests
+# ---------------------------------------------------------------------------
+
+class TestSecretFalsePositives(unittest.TestCase):
+    def setUp(self):
+        from js_analyzer_engine import JSAnalyzerEngine
+        self.engine = JSAnalyzerEngine()
+
+    def _secrets(self, text):
+        return self.engine.analyze(text)['secrets']
+
+    # bare hex32 without context => 0 secrets
+    def test_bare_hex32_no_context_rejected(self):
+        vals = self._secrets('var x = "deadbeefdeadbeefdeadbeefdeadbeef";')
+        types = [s['type'] for s in vals]
+        self.assertNotIn('Bugsnag API Key', types,
+            'bare hex32 without "bugsnag" context must NOT be reported as Bugsnag')
+
+    # bugsnag context + high entropy => reported
+    def test_bugsnag_with_context_accepted(self):
+        key = 'a3f1e29c7b84d56f0e91c2a748b3d5e6'
+        text = 'bugsnag.apiKey = "%s"' % key
+        vals = self._secrets(text)
+        types = [s['type'] for s in vals]
+        self.assertIn('Bugsnag API Key', types,
+            'hex32 with "bugsnag" context and high entropy MUST be reported')
+
+    # low entropy hex with bugsnag context => rejected
+    def test_bugsnag_low_entropy_rejected(self):
+        key = 'aaaabbbbccccddddaaaabbbbccccdddd'   # entropy ~2.0
+        text = 'bugsnag.apiKey = "%s"' % key
+        vals = self._secrets(text)
+        types = [s['type'] for s in vals]
+        self.assertNotIn('Bugsnag API Key', types,
+            'low-entropy hex32 must be rejected even with bugsnag context')
+
+    # bare [a-z0-9]{32} without context => 0 Datadog findings
+    def test_bare_alnum32_no_context_rejected(self):
+        vals = self._secrets('var token = "abcdef1234567890abcdef1234567890";')
+        types = [s['type'] for s in vals]
+        self.assertNotIn('Datadog API Key', types,
+            'bare alnum32 without "datadog" context must NOT be reported')
+
+    # datadog context + high entropy => reported
+    def test_datadog_with_context_accepted(self):
+        key = 'a3f1e29c7b84d56f0e91c2a748b3d5e7'
+        text = 'datadog_api_key = "%s"' % key
+        vals = self._secrets(text)
+        types = [s['type'] for s in vals]
+        self.assertIn('Datadog API Key', types)
+
+    # AKIA (fixed-prefix KEEP) still reported — bypass entropy floor
+    def test_akia_still_reported(self):
+        vals = self._secrets('aws_key = "AKIA1234567890ABCDEF"')
+        types = [s['type'] for s in vals]
+        self.assertIn('AWS Key', types)
+
+    # JWT still reported
+    def test_jwt_reported(self):
+        text = 'token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"'
+        vals = self._secrets(text)
+        types = [s['type'] for s in vals]
+        self.assertIn('JWT', types)
+
+    # all-same-char value => rejected
+    def test_all_same_char_rejected(self):
+        from js_analyzer_engine import _is_valid_secret
+        self.assertFalse(_is_valid_secret('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'))
+
+    # UUID shape => rejected
+    def test_uuid_shape_rejected(self):
+        from js_analyzer_engine import _is_valid_secret
+        self.assertFalse(_is_valid_secret('550e8400-e29b-41d4-a716-446655440000'))
+
+    # Telegram without context => not reported
+    def test_telegram_without_context_rejected(self):
+        text = 'var x = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi";'
+        vals = self._secrets(text)
+        types = [s['type'] for s in vals]
+        self.assertNotIn('Telegram Bot Token', types,
+            'Telegram token without telegram/tg/bot context must not be reported')
+
+    def test_telegram_with_context_accepted(self):
+        text = 'telegram_bot_token = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi"'
+        vals = self._secrets(text)
+        types = [s['type'] for s in vals]
+        self.assertIn('Telegram Bot Token', types)
+
+    # Twilio SK without context => not reported
+    def test_twilio_without_context_rejected(self):
+        text = 'var k = "SK' + 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4' + '"'
+        vals = self._secrets(text)
+        types = [s['type'] for s in vals]
+        self.assertNotIn('Twilio API Key', types)
+
+    def test_twilio_with_context_accepted(self):
+        text = 'twilio_key = "SK' + 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4' + '"'
+        vals = self._secrets(text)
+        types = [s['type'] for s in vals]
+        self.assertIn('Twilio API Key', types)
+
+    # Dropbox without context => not reported
+    def test_dropbox_without_context_rejected(self):
+        text = 'var t = "sl.ABcDeFgHiJkLmNoPqRsTuVwXyZabcdefghijklmnopqr";'
+        vals = self._secrets(text)
+        types = [s['type'] for s in vals]
+        self.assertNotIn('Dropbox Access Token', types)
+
+    def test_dropbox_with_context_accepted(self):
+        text = 'dropbox_token = "sl.ABcDeFgHiJkLmNoPqRsTuVwXyZabcdefghijklmnopqr"'
+        vals = self._secrets(text)
+        types = [s['type'] for s in vals]
+        self.assertIn('Dropbox Access Token', types)
+
+    # min-length floor raised from 10 to 12 in Phase 2
+    def test_length_11_below_new_floor_rejected(self):
+        from js_analyzer_engine import _is_valid_secret
+        self.assertFalse(_is_valid_secret('AKIA1234567'))  # len=11, below new floor of 12
+
+    # example/placeholder tokens => rejected
+    def test_example_token_rejected(self):
+        from js_analyzer_engine import _is_valid_secret
+        self.assertFalse(_is_valid_secret('your_api_key_here_example'))
+        self.assertFalse(_is_valid_secret('xxxxxxxxxxxxxxxxxxxxxxxxxxxx'))
+        self.assertFalse(_is_valid_secret('changeme_placeholder_value_1'))
+
+    # per-response span dedup: same value matched by two patterns => 1 finding
+    def test_span_dedup_one_finding_per_value(self):
+        text = 'AKIA1234567890ABCDEF'
+        vals = self._secrets(text)
+        akia_vals = [s for s in vals if s['type'] == 'AWS Key']
+        self.assertEqual(len(akia_vals), 1, 'same span must not produce duplicate findings')
+
+    # masked field present and non-empty
+    def test_masked_field_present(self):
+        vals = self._secrets('bugsnag.key = "a3f1e29c7b84d56f0e91c2a748b3d5e6"')
+        for s in vals:
+            self.assertIn('masked', s)
+            self.assertTrue(len(s['masked']) > 0)
+
+    # raw value stored (for dedup key in adapter)
+    def test_value_field_is_raw(self):
+        vals = self._secrets('bugsnag.key = "a3f1e29c7b84d56f0e91c2a748b3d5e6"')
+        for s in vals:
+            self.assertEqual(s['value'], s['value'].strip())
+            self.assertNotIn('...', s['value'],
+                'secret value field must be raw (unmasked)')
+
+
 if __name__ == '__main__':
     unittest.main()
