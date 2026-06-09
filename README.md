@@ -8,6 +8,7 @@ A powerful Burp Suite extension for JavaScript static analysis. Extracts API end
 ![Burp Suite](https://img.shields.io/badge/Burp%20Suite-Extension-orange)
 ![Python](https://img.shields.io/badge/Python-Jython%202.7-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
+![tests](https://github.com/grimnir/JSAnalyzer/actions/workflows/ci.yml/badge.svg)
 
 ---
 
@@ -85,6 +86,10 @@ You can select multiple requests from HTTP history or the dashboard and send the
 4. Watch live results in the discovery table; press **Stop** anytime
 
 > ⚠️ Active discovery sends real HTTP requests. Only run it against targets you are authorized to test. Defaults are conservative (GET-only, in-scope-only, destructive paths skipped).
+
+## Screenshots
+
+_Screenshots: load the extension and see the **JS Analyzer** tab (passive findings, 6 sub-tabs) and the **JS Probe** tab (active discovery). PRs with screenshots welcome._
 
 ## What It Detects
 
