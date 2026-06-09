@@ -316,5 +316,40 @@ class TestSoft404Fingerprint(unittest.TestCase):
         self.assertLess(wb, 2000)
 
 
+class TestBuildRequestLine(unittest.TestCase):
+    """build_request_line(original_line, path) -- pure string helper."""
+
+    def setUp(self):
+        from discovery_logic import build_request_line
+        self._fn = build_request_line
+
+    def test_replaces_path(self):
+        result = self._fn('GET /old/path HTTP/1.1', '/new/path')
+        self.assertEqual(result, 'GET /new/path HTTP/1.1')
+
+    def test_preserves_method(self):
+        result = self._fn('GET /x HTTP/1.1', '/y')
+        self.assertTrue(result.startswith('GET '))
+
+    def test_preserves_protocol(self):
+        result = self._fn('GET /x HTTP/1.1', '/y')
+        self.assertTrue(result.endswith('HTTP/1.1'))
+
+    def test_multiple_spaces_handled(self):
+        # If original line has multiple spaces, only first token is method,
+        # last token is protocol.
+        result = self._fn('GET /foo/bar HTTP/1.1', '/baz')
+        self.assertEqual(result, 'GET /baz HTTP/1.1')
+
+    def test_path_with_query_param(self):
+        # Path may contain ?; function passes it through unchanged
+        result = self._fn('GET /old HTTP/1.1', '/new?a=1')
+        self.assertEqual(result, 'GET /new?a=1 HTTP/1.1')
+
+    def test_empty_path_raises(self):
+        with self.assertRaises(ValueError):
+            self._fn('GET /old HTTP/1.1', '')
+
+
 if __name__ == '__main__':
     unittest.main()

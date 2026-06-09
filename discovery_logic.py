@@ -92,3 +92,22 @@ def soft404_fingerprint(status, body_len, body):
     """
     len_bucket = (body_len // 64) * 64
     return (status, len_bucket, _word_bucket(body))
+
+
+# ---------------------------------------------------------------------------
+# Pure request-line builder (testable without Burp)
+# ---------------------------------------------------------------------------
+def build_request_line(original_line, path):
+    """Rebuild an HTTP request line with a new path.
+
+    original_line: e.g. 'GET /old/path HTTP/1.1'
+    path:          e.g. '/api/v1/users'
+    Returns: 'GET /api/v1/users HTTP/1.1'
+    Raises ValueError if path is empty.
+    """
+    if not path:
+        raise ValueError('path must be non-empty')
+    parts = original_line.split(' ')
+    method   = parts[0]
+    protocol = parts[-1]
+    return '%s %s %s' % (method, path, protocol)
