@@ -441,8 +441,12 @@ class ProbeAction(ActionListener):
             ext._log(traceback.format_exc())
 
 
-class _DiscoveryTab(object):
-    """Minimal ITab wrapper for the DiscoveryPanel."""
+class _DiscoveryTab(ITab):
+    """Minimal ITab wrapper for the DiscoveryPanel.
+
+    MUST extend burp.ITab: Jython passes this to callbacks.addSuiteTab(ITab),
+    and a plain object would raise TypeError (the 'JS Probe' tab never appears).
+    """
 
     def __init__(self, panel):
         self._panel = panel
