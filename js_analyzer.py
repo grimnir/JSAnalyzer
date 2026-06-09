@@ -187,6 +187,8 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, IExtensionStateList
         """Analyze a response using the pure engine and push findings to the UI."""
         response = message_info.getResponse()
         if not response:
+            self._log('Skipped: selected item has NO response. '
+                      'Right-click an item that has a response (e.g. in Proxy > HTTP history or Repeater).')
             return
 
         # Determine display name for the source file
@@ -206,6 +208,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, IExtensionStateList
         body = self._helpers.bytesToString(response[body_offset:])
 
         if len(body) < 50:
+            self._log('Skipped %s: response body too small (%d bytes; need >= 50)' % (source_name, len(body)))
             return
 
         if len(body) > _BODY_CAP:
@@ -322,6 +325,7 @@ class AnalyzeAction(ActionListener):
         """Called on EDT -- immediately hand off to a worker thread."""
         try:
             messages = list(self.invocation.getSelectedMessages())
+            self.extender._log('Analyze requested: %d message(s)' % len(messages))
             t = JThread(_AnalyzeRunnable(self.extender, messages))
             t.setDaemon(True)
             t.setName('JSAnalyzer-worker')

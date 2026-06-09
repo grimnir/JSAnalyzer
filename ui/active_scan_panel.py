@@ -379,6 +379,10 @@ class DiscoveryEngine(object):
         self._queue        = ConcurrentLinkedQueue()  # metadata dicts -> Timer drains
         self._done         = AtomicInteger(0)
         self._total        = len(paths)
+        # Live tally so the operator can see WHY the table is (or isn't) filling
+        self._found        = AtomicInteger(0)   # interesting results
+        self._soft404      = AtomicInteger(0)   # suppressed as soft-404 baseline
+        self._errors       = AtomicInteger(0)   # timeouts / connection errors
 
         # Soft-404 baselines: list of fingerprint tuples
         self._baselines    = []
@@ -468,8 +472,10 @@ class DiscoveryEngine(object):
         looks frozen on targets that 404 most paths.
         """
         self._queue.add(meta)
+        self._found.incrementAndGet()
 
     def record_error(self):
+        self._errors.incrementAndGet()
         streak = self._error_streak.incrementAndGet()
         if streak >= 20:
             self._error_streak.set(0)
@@ -578,6 +584,7 @@ class ProbeTask(Runnable):
             fp = soft404_fingerprint(status, length, body)
 
             if e._is_soft404(fp):
+                e._soft404.incrementAndGet()
                 return
 
             if not is_interesting(status, has_loc):
@@ -642,9 +649,14 @@ class _DrainAction(ActionListener):
             count += 1
         if rows:
             self._panel.append_rows(rows)
-        done  = self._engine._done.get()
-        total = self._engine._total
-        self._panel.set_progress(done, total)
+        e = self._engine
+        done = e._done.get()
+        self._panel.set_progress(done, e._total)
+        # Live tally -> status label, so an empty table is self-explanatory:
+        #   misses (e.g. 404) = done - hits - soft404 - errors
+        self._panel.set_status(
+            'probed %d/%d | hits %d | soft404 %d | errors %d'
+            % (done, e._total, e._found.get(), e._soft404.get(), e._errors.get()))
 
 
 # ---------------------------------------------------------------------------
