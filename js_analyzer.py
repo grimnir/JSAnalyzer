@@ -237,7 +237,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, IExtensionStateList
                 finding['value'] = masked
                 new_findings.append(finding)
 
-        # dictionary -- Phase 0: always [] so this loop is a no-op until Phase 1
+        # dictionary -- (template, evidence) tuples; store the template value
         for template, evidence in result['dictionary']:
             finding = self._add_finding('dictionary', template, source_name)
             if finding:

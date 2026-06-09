@@ -5,8 +5,8 @@ ui/active_scan_panel.py -- WS2 Active Scanner panel for JS Analyzer.
 DiscoveryConfig  -- settings with defaults and ceiling enforcement.
 WordlistLoader   -- loads and sanitises api.txt using pure _sanitize().
 DiscoveryPanel   -- JPanel: table / progressbar / start-stop / filter / export.
-DiscoveryEngine  -- ThreadPoolExecutor dispatcher (wired in Task P3.4).
-ProbeTask        -- per-path Runnable (wired in Task P3.4).
+DiscoveryEngine  -- ThreadPoolExecutor dispatcher.
+ProbeTask        -- per-path Runnable.
 
 Burp/Swing only: no python3 unit tests possible for this file.
 Manual verification steps are listed at the bottom of each section.
@@ -130,7 +130,7 @@ class DiscoveryPanel(JPanel):
         self._extender  = extender
         self._helpers   = callbacks.getHelpers()
         self.config     = config
-        self._engine    = None    # set in P3.4
+        self._engine    = None    # set via set_engine()
 
         self._init_ui()
 
@@ -214,7 +214,7 @@ class DiscoveryPanel(JPanel):
         # All rows storage (unfiltered)
         self._all_rows = []
 
-    # --- public API used by DiscoveryEngine (P3.4) ---
+    # --- public API used by DiscoveryEngine ---
 
     def set_engine(self, engine):
         self._engine = engine
@@ -333,7 +333,7 @@ class _ExportCSVAction(ActionListener):
 
 
 # ---------------------------------------------------------------------------
-# DiscoveryEngine -- §3.4 ThreadPoolExecutor + token-bucket dispatcher
+# DiscoveryEngine -- ThreadPoolExecutor + token-bucket dispatcher
 # ---------------------------------------------------------------------------
 # Java concurrency imports (Jython 2.7)
 from java.util.concurrent import (
@@ -668,7 +668,7 @@ class _StatusRunnable(Runnable):
 
 
 # ---------------------------------------------------------------------------
-# _SaveConfigAction -- persists DiscoveryConfig from panel fields (P3.6)
+# _SaveConfigAction -- persists DiscoveryConfig from panel fields
 # ---------------------------------------------------------------------------
 class _SaveConfigAction(ActionListener):
     def __init__(self, panel):
@@ -679,15 +679,15 @@ class _SaveConfigAction(ActionListener):
         cfg = p.config
         try:
             cfg.set_threads(p._threads_field.getText().strip())
-        except (ValueError, Exception):
+        except Exception:
             pass
         try:
             cfg.set_rate(p._rate_field.getText().strip())
-        except (ValueError, Exception):
+        except Exception:
             pass
         try:
             cfg.set_timeout(p._timeout_field.getText().strip())
-        except (ValueError, Exception):
+        except Exception:
             pass
         cfg.destructive = p._destructive_cb.isSelected()
         cfg.in_scope    = p._inscope_cb.isSelected()

@@ -89,8 +89,6 @@ def _match_dict(body, idx, cap=500):
 
 
 # ==================== ENDPOINT PATTERNS ====================
-# Copied verbatim from js_analyzer.py lines 38-67
-
 # (compiled_re, label) tuples. Label is used internally for validation
 # (the 'Relative API Path' label bypasses the leading-slash requirement);
 # result['endpoints'] stays a list of plain strings.
@@ -130,7 +128,6 @@ ENDPOINT_PATTERNS = [
 ]
 
 # ==================== URL PATTERNS ====================
-# Copied verbatim from js_analyzer.py lines 70-81
 
 URL_PATTERNS = [
     re.compile(r'["\'](https?://[^\s"\'<>]{10,})["\']'),
@@ -213,12 +210,10 @@ SECRET_PATTERNS = [
 ]
 
 # ==================== EMAIL PATTERN ====================
-# Copied verbatim from js_analyzer.py line 121
 
 EMAIL_PATTERN = re.compile(r'([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,6})')
 
 # ==================== FILE PATTERNS ====================
-# Copied verbatim from js_analyzer.py lines 124-135
 
 FILE_PATTERNS = re.compile(
     r'["\']([a-zA-Z0-9_/.-]+\.(?:'
@@ -234,7 +229,6 @@ FILE_PATTERNS = re.compile(
 )
 
 # ==================== NOISE FILTERS ====================
-# Copied verbatim from js_analyzer.py lines 141-211
 
 NOISE_DOMAINS = {
     'www.w3.org', 'schemas.openxmlformats.org', 'schemas.microsoft.com',
@@ -298,8 +292,8 @@ NOISE_STRINGS = {
 
 
 # ==================== MODULE-LEVEL VALIDATORS ====================
-# Promoted from BurpExtender instance methods (js_analyzer.py lines 384-485)
-# so they can be called and tested under CPython3 without any Burp dependency.
+# Module-level (not instance methods) so they can be called and tested under
+# CPython3 without any Burp dependency.
 
 def _is_valid_endpoint(value, label=''):
     """Return True if value is a real API endpoint path worth reporting.
@@ -323,10 +317,7 @@ def _is_valid_endpoint(value, label=''):
 
 
 def _is_valid_url(value):
-    """Return True if value is a non-noise full URL.
-
-    Copied from BurpExtender._is_valid_url (js_analyzer.py:409-433).
-    """
+    """Return True if value is a non-noise full URL."""
     if not value or len(value) < 15:
         return False
     val_lower = value.lower()
@@ -358,15 +349,12 @@ def _entropy(s):
 
 
 def _is_valid_secret(value, label=''):
-    """Return True if value looks like a real secret (§4.3).
+    """Return True if value looks like a real secret.
 
     Fixed-prefix KEEP patterns (label in _SECRET_KEEP_LABELS) bypass the weak
     heuristics (trivial sequences + entropy floor) -- the prefix is the precision.
-
-    Spec-gap G1: spec §4.3 writes _is_valid_secret(value) as pseudocode; the
-    real signature carries an optional label to drive the KEEP bypass.
     """
-    if not value or len(value) < 12:  # Raised from 10 to 12 in Phase 2
+    if not value or len(value) < 12:
         return False
     v = value.strip()
     vl = v.lower()
@@ -392,10 +380,7 @@ def _is_valid_secret(value, label=''):
 
 
 def _is_valid_email(value):
-    """Return True if value is a real (non-placeholder) email address.
-
-    Copied from BurpExtender._is_valid_email (js_analyzer.py:446-460).
-    """
+    """Return True if value is a real (non-placeholder) email address."""
     if not value or '@' not in value:
         return False
     val_lower = value.lower()
@@ -408,10 +393,7 @@ def _is_valid_email(value):
 
 
 def _is_valid_file(value):
-    """Return True if value is a sensitive file reference worth reporting.
-
-    Copied from BurpExtender._is_valid_file (js_analyzer.py:462-485).
-    """
+    """Return True if value is a sensitive file reference worth reporting."""
     if not value or len(value) < 3:
         return False
     val_lower = value.lower()
@@ -488,7 +470,7 @@ class JSAnalyzerEngine(object):
     Stateless per call. Dedup, persistence, and file I/O live in the adapter.
 
     Args:
-        wordlist: iterable of path strings for dictionary matching (Phase 1).
+        wordlist: iterable of path strings for dictionary matching.
                   Pass None (default) to disable dictionary matching.
     """
 
@@ -515,7 +497,7 @@ class JSAnalyzerEngine(object):
                 'emails'     : list of str
                 'files'      : list of str
                 'dictionary' : list of (template: str, evidence: str)
-                               Always [] in Phase 0.
+                               [] when no wordlist is loaded.
         """
         result = {
             'endpoints': [],
@@ -606,7 +588,7 @@ class JSAnalyzerEngine(object):
                 seen_fi.add(value)
                 result['files'].append(value)
 
-        # 6. Dictionary -- §2.3 passive matching (only when a wordlist is loaded)
+        # 6. Dictionary -- passive path matching (only when a wordlist is loaded)
         if self._index:
             result['dictionary'] = _match_dict(js_text, self._index, cap=500)
 
@@ -616,7 +598,7 @@ class JSAnalyzerEngine(object):
     def _build_index(lines):
         """Build a frozenset index of normalized paths from an iterable of strings.
 
-        Used in Phase 1. Defined here so tests can call it directly.
+        Defined here so tests can call it directly.
         """
         idx = set()
         for ln in lines:
@@ -625,19 +607,17 @@ class JSAnalyzerEngine(object):
                 idx.add(JSAnalyzerEngine._norm_path(p))
         return frozenset(idx)
 
+    # These staticmethods delegate to the module-level functions, which are the
+    # single source of truth; they exist so JSAnalyzerEngine._norm_* still works.
     @staticmethod
     def _norm_seg(s):
-        """Delegate to module-level _norm_seg (defined in P1.2)."""
+        """Delegate to module-level _norm_seg."""
         return _norm_seg(s)
 
     @staticmethod
     def _norm_path(p):
-        """Delegate to module-level _norm_path (defined in P1.2)."""
+        """Delegate to module-level _norm_path."""
         return _norm_path(p)
-    # NOTE (fix [2]): _norm_seg, _norm_path, _SEG_NUM, _SEG_VER, _SEG_UUID,
-    # _SEG_HEX are module-level names added in Phase 1 Task P1.2. These
-    # staticmethods simply delegate -- they do NOT inline re.compile().
-    # The module-level definitions are the single source of truth.
 
     @staticmethod
     def _entropy(s):

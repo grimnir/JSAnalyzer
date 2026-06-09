@@ -20,6 +20,18 @@ import json
 class ResultsPanel(JPanel):
     """Results panel with search filter and copy functionality."""
 
+    # Tab order: (display title, category key). Index matches tab index.
+    _TABS = (
+        ("Endpoints", "endpoints"),
+        ("URLs", "urls"),
+        ("Secrets", "secrets"),
+        ("Emails", "emails"),
+        ("Files", "files"),
+        ("Dictionary", "dictionary"),
+    )
+    # Categories that track per-panel duplicate counts (Dictionary excluded).
+    _DUP_CATEGORIES = ('endpoints', 'urls', 'secrets', 'emails', 'files')
+
     def __init__(self, callbacks, extender):
         JPanel.__init__(self)
         self.callbacks = callbacks
@@ -36,10 +48,10 @@ class ResultsPanel(JPanel):
         }
 
         # Duplicate counters (panel-level, for display)
-        self.dup_counts = {k: 0 for k in ('endpoints', 'urls', 'secrets', 'emails', 'files')}
+        self.dup_counts = {k: 0 for k in self._DUP_CATEGORIES}
 
         # Panel-level seen sets for dup counting
-        self._panel_seen = {k: set() for k in ('endpoints', 'urls', 'secrets', 'emails', 'files')}
+        self._panel_seen = {k: set() for k in self._DUP_CATEGORIES}
 
         # Unique sources
         self.sources = set()
@@ -184,10 +196,7 @@ class ResultsPanel(JPanel):
         selected_source = str(self.source_filter.getSelectedItem())
         search_text = self.search_field.getText().lower().strip()
 
-        titles = ["Endpoints", "URLs", "Secrets", "Emails", "Files", "Dictionary"]
-        keys = ["endpoints", "urls", "secrets", "emails", "files", "dictionary"]
-
-        for i, (title, key) in enumerate(zip(titles, keys)):
+        for i, (title, key) in enumerate(self._TABS):
             model = self.models[key]
             model.setRowCount(0)
 
@@ -234,18 +243,14 @@ class ResultsPanel(JPanel):
 
     def _get_current_table(self):
         """Get the currently visible table."""
-        idx = self.tabs.getSelectedIndex()
-        keys = ["endpoints", "urls", "secrets", "emails", "files", "dictionary"]
-        if 0 <= idx < len(keys):
-            return self.tables.get(keys[idx])
-        return None
+        key = self._get_current_key()
+        return self.tables.get(key) if key else None
 
     def _get_current_key(self):
         """Get the current category key."""
         idx = self.tabs.getSelectedIndex()
-        keys = ["endpoints", "urls", "secrets", "emails", "files", "dictionary"]
-        if 0 <= idx < len(keys):
-            return keys[idx]
+        if 0 <= idx < len(self._TABS):
+            return self._TABS[idx][1]
         return None
 
     def copy_selected(self):
@@ -291,8 +296,8 @@ class ResultsPanel(JPanel):
         """Clear all results."""
         for key in self.findings:
             self.findings[key] = []
-        self.dup_counts = {k: 0 for k in ('endpoints', 'urls', 'secrets', 'emails', 'files')}
-        self._panel_seen = {k: set() for k in ('endpoints', 'urls', 'secrets', 'emails', 'files')}
+        self.dup_counts = {k: 0 for k in self._DUP_CATEGORIES}
+        self._panel_seen = {k: set() for k in self._DUP_CATEGORIES}
         self.sources = set()
 
         self.source_filter.removeAllItems()
