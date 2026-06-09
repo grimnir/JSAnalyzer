@@ -224,11 +224,12 @@ class DiscoveryPanel(JPanel):
         self._status_lbl.setText(text)
 
     def set_progress(self, done, total):
-        """Update progress bar from EDT."""
+        """Update progress bar from EDT (shows probed/total and live hit count)."""
+        found = len(self._all_rows)
         if total > 0:
             pct = int(float(done) / float(total) * 100)
             self._progress.setValue(pct)
-            self._progress.setString('%d / %d' % (done, total))
+            self._progress.setString('%d / %d  (%d found)' % (done, total, found))
         else:
             self._progress.setValue(0)
             self._progress.setString('0 / 0')
@@ -460,9 +461,13 @@ class DiscoveryEngine(object):
         return fingerprint in self._baselines
 
     def record_result(self, meta):
-        """Called from ProbeTask worker thread -- push to queue."""
+        """Called from ProbeTask worker thread -- push an interesting result to the queue.
+
+        Progress (_done) is incremented per-probe in ProbeTask.run (every outcome),
+        NOT here -- otherwise the progress bar only moves on interesting hits and
+        looks frozen on targets that 404 most paths.
+        """
         self._queue.add(meta)
-        self._done.incrementAndGet()
 
     def record_error(self):
         streak = self._error_streak.incrementAndGet()
@@ -590,6 +595,10 @@ class ProbeTask(Runnable):
 
         except Exception:
             e.record_error()
+        finally:
+            # Count EVERY completed probe (hit, miss, soft-404, drop, error) so the
+            # progress bar reflects real scan progress -- not just interesting hits.
+            e._done.incrementAndGet()
 
 
 # ---------------------------------------------------------------------------

@@ -246,15 +246,8 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, IExtensionStateList
         if new_findings:
             self._log('Found %d new items' % len(new_findings))
             # Marshal UI update to EDT (analyze_response runs on a worker thread)
-            panel = self.panel
-            findings_snapshot = list(new_findings)
-            source_snapshot = source_name
-
-            class _AddFindingsRunnable(JRunnable):
-                def run(self):
-                    panel.add_findings(findings_snapshot, source_snapshot)
-
-            SwingUtilities.invokeLater(_AddFindingsRunnable())
+            SwingUtilities.invokeLater(
+                _AddFindingsRunnable(self.panel, list(new_findings), source_name))
         else:
             self._log('No new findings')
 
@@ -303,6 +296,21 @@ class _AnalyzeRunnable(JRunnable):
                 self.extender.analyze_response(msg)
             except Exception as e:
                 self.extender._log('Error analyzing response: ' + str(e))
+
+
+class _AddFindingsRunnable(JRunnable):
+    """EDT body: push new findings into the results panel.
+
+    Module-level (not a nested closure) for reliable Jython 2.7 behaviour --
+    matches the Runnable pattern used everywhere else in the extension.
+    """
+    def __init__(self, panel, findings, source):
+        self.panel = panel
+        self.findings = findings
+        self.source = source
+
+    def run(self):
+        self.panel.add_findings(self.findings, self.source)
 
 
 class AnalyzeAction(ActionListener):
