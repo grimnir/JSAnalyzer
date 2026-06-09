@@ -157,3 +157,179 @@ class TestDictionaryKeyIsListOfTuples(unittest.TestCase):
         engine = JSAnalyzerEngine(wordlist=None)
         result = engine.analyze('fetch("api/v1/users/42");')
         self.assertEqual(result['dictionary'], [])
+
+
+class TestValidators(unittest.TestCase):
+    """Regression lock for the five _is_valid_* module-level functions.
+
+    These tests encode the CURRENT behavior (Phase 0 baseline).
+    They must stay GREEN through all subsequent phases.
+    """
+
+    # ------------------------------------------------------------------
+    # _is_valid_endpoint
+    # ------------------------------------------------------------------
+
+    def test_endpoint_no_leading_slash_rejected(self):
+        from js_analyzer_engine import _is_valid_endpoint
+        # Paths without a leading '/' must be rejected (js_analyzer.py:399)
+        self.assertFalse(_is_valid_endpoint('api/v1/users'))
+        self.assertFalse(_is_valid_endpoint('v1/products'))
+
+    def test_endpoint_too_short_rejected(self):
+        from js_analyzer_engine import _is_valid_endpoint
+        self.assertFalse(_is_valid_endpoint('/a'))
+        self.assertFalse(_is_valid_endpoint(''))
+
+    def test_endpoint_noise_string_rejected(self):
+        from js_analyzer_engine import _is_valid_endpoint
+        # NOISE_STRINGS exact match -- '/a', '/R', '/V' (js_analyzer.py:207-211)
+        self.assertFalse(_is_valid_endpoint('/a'))
+        self.assertFalse(_is_valid_endpoint('/R'))
+        self.assertFalse(_is_valid_endpoint('/V'))
+
+    def test_endpoint_single_segment_with_short_parts_rejected(self):
+        from js_analyzer_engine import _is_valid_endpoint
+        # All non-empty parts shorter than 2 chars (js_analyzer.py:404)
+        self.assertFalse(_is_valid_endpoint('/a/b'))
+
+    def test_endpoint_valid_api_path_accepted(self):
+        from js_analyzer_engine import _is_valid_endpoint
+        self.assertTrue(_is_valid_endpoint('/api/v1/users'))
+        self.assertTrue(_is_valid_endpoint('/auth/login'))
+        self.assertTrue(_is_valid_endpoint('/internal/health'))
+
+    def test_endpoint_noise_pattern_dotslash_rejected(self):
+        from js_analyzer_engine import _is_valid_endpoint
+        # Starts with ./ -- matches NOISE_PATTERNS[0] (js_analyzer.py:163)
+        self.assertFalse(_is_valid_endpoint('./utils/helper'))
+
+    # ------------------------------------------------------------------
+    # _is_valid_url
+    # ------------------------------------------------------------------
+
+    def test_url_noise_domain_rejected(self):
+        from js_analyzer_engine import _is_valid_url
+        # NOISE_DOMAINS (js_analyzer.py:141-150)
+        self.assertFalse(_is_valid_url('https://www.w3.org/2001/XMLSchema'))
+        self.assertFalse(_is_valid_url('https://example.com/api/resource'))
+        self.assertFalse(_is_valid_url('https://schemas.microsoft.com/winfx'))
+
+    def test_url_data_uri_rejected(self):
+        from js_analyzer_engine import _is_valid_url
+        self.assertFalse(_is_valid_url('data:image/png;base64,iVBORw0KGgo='))
+
+    def test_url_too_short_rejected(self):
+        from js_analyzer_engine import _is_valid_url
+        self.assertFalse(_is_valid_url('http://x.co'))   # len < 15
+
+    def test_url_static_asset_rejected(self):
+        from js_analyzer_engine import _is_valid_url
+        self.assertFalse(_is_valid_url('https://cdn.example.org/logo.png'))
+        self.assertFalse(_is_valid_url('https://cdn.example.org/fonts/main.woff'))
+
+    def test_url_real_url_accepted(self):
+        from js_analyzer_engine import _is_valid_url
+        self.assertTrue(_is_valid_url('https://api.stripe.com/v1/charges'))
+        self.assertTrue(_is_valid_url('wss://realtime.example.org/socket'))
+
+    def test_url_with_placeholder_rejected(self):
+        from js_analyzer_engine import _is_valid_url
+        self.assertFalse(_is_valid_url('https://api.example.org/{resource}/list'))
+        self.assertFalse(_is_valid_url('https://api.example.org/null'))
+
+    # ------------------------------------------------------------------
+    # _is_valid_secret
+    # ------------------------------------------------------------------
+
+    def test_secret_with_example_keyword_rejected(self):
+        from js_analyzer_engine import _is_valid_secret
+        self.assertFalse(_is_valid_secret('AKIAIOSFODNN7EXAMPLE'))
+
+    def test_secret_with_placeholder_keyword_rejected(self):
+        from js_analyzer_engine import _is_valid_secret
+        self.assertFalse(_is_valid_secret('your-api-key-here-placeholder'))
+
+    def test_secret_with_test_keyword_rejected(self):
+        from js_analyzer_engine import _is_valid_secret
+        self.assertFalse(_is_valid_secret('sk_test_abcdefghijklmnop'))
+
+    def test_secret_too_short_rejected(self):
+        from js_analyzer_engine import _is_valid_secret
+        self.assertFalse(_is_valid_secret('AKIA123'))   # len < 10
+
+    def test_secret_real_aws_key_accepted(self):
+        from js_analyzer_engine import _is_valid_secret
+        # Length 20, no noise keyword, passes current Phase 0 gate
+        self.assertTrue(_is_valid_secret('AKIAIOSFODNN7EXAMPL2'))
+
+    # ------------------------------------------------------------------
+    # _is_valid_email
+    # ------------------------------------------------------------------
+
+    def test_email_example_domain_rejected(self):
+        from js_analyzer_engine import _is_valid_email
+        self.assertFalse(_is_valid_email('user@example.com'))
+        self.assertFalse(_is_valid_email('admin@test.com'))
+        self.assertFalse(_is_valid_email('info@domain.com'))
+
+    def test_email_noreply_rejected(self):
+        from js_analyzer_engine import _is_valid_email
+        # 'noreply' in value (js_analyzer.py:457)
+        self.assertFalse(_is_valid_email('noreply@real-company.com'))
+
+    def test_email_test_keyword_rejected(self):
+        from js_analyzer_engine import _is_valid_email
+        self.assertFalse(_is_valid_email('test.user@real-company.com'))
+
+    def test_email_real_email_accepted(self):
+        from js_analyzer_engine import _is_valid_email
+        self.assertTrue(_is_valid_email('alice@company.io'))
+        self.assertTrue(_is_valid_email('support@startup.ai'))
+
+    def test_email_without_at_rejected(self):
+        from js_analyzer_engine import _is_valid_email
+        self.assertFalse(_is_valid_email('notanemail.com'))
+
+    # ------------------------------------------------------------------
+    # _is_valid_file
+    # ------------------------------------------------------------------
+
+    def test_file_package_json_rejected(self):
+        from js_analyzer_engine import _is_valid_file
+        self.assertFalse(_is_valid_file('package.json'))
+        self.assertFalse(_is_valid_file('tsconfig.json'))
+
+    def test_file_webpack_artifact_rejected(self):
+        from js_analyzer_engine import _is_valid_file
+        self.assertFalse(_is_valid_file('main.chunk.js'))
+        self.assertFalse(_is_valid_file('vendor.bundle.js'))
+
+    def test_file_source_map_rejected(self):
+        from js_analyzer_engine import _is_valid_file
+        self.assertFalse(_is_valid_file('app.js.map'))
+
+    def test_file_backup_sql_accepted(self):
+        from js_analyzer_engine import _is_valid_file
+        self.assertTrue(_is_valid_file('backup.sql'))
+        self.assertTrue(_is_valid_file('database_dump.sql'))
+
+    def test_file_certificate_accepted(self):
+        from js_analyzer_engine import _is_valid_file
+        self.assertTrue(_is_valid_file('server.pem'))
+        self.assertTrue(_is_valid_file('private.key'))
+
+    def test_file_short_locale_json_rejected(self):
+        from js_analyzer_engine import _is_valid_file
+        # Filename <= 7 chars ending in .json (js_analyzer.py:482-483)
+        # "en.json" -> split('/')[-1] = "en.json" len=7 -> rejected
+        self.assertFalse(_is_valid_file('en.json'))
+
+    def test_file_longer_json_accepted(self):
+        from js_analyzer_engine import _is_valid_file
+        # "settings.json" -> len=13 > 7 -> accepted
+        self.assertTrue(_is_valid_file('settings.json'))
+
+
+if __name__ == '__main__':
+    unittest.main()
