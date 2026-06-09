@@ -7,7 +7,7 @@ Features: Search filter (debounced), Copy button, Source filtering,
 
 from javax.swing import (
     JPanel, JScrollPane, JTabbedPane, JButton, JLabel,
-    JTable, JComboBox, JTextField, BorderFactory,
+    JTable, JComboBox, JTextField, JCheckBox, BorderFactory,
     JMenuItem, JPopupMenu, Timer as SwingTimer
 )
 from javax.swing.table import DefaultTableModel
@@ -116,6 +116,11 @@ class ResultsPanel(JPanel):
         export_csv_btn.addActionListener(ExportCsvAction(self))
         controls.add(export_csv_btn)
 
+        # Auto-analyze toggle (default OFF -- proxy traffic can be heavy)
+        self._auto_cb = JCheckBox("Auto-analyze JS from proxy")
+        self._auto_cb.setSelected(False)
+        controls.add(self._auto_cb)
+
         header.add(controls, BorderLayout.EAST)
         self.add(header, BorderLayout.NORTH)
 
@@ -166,6 +171,12 @@ class ResultsPanel(JPanel):
             self.tabs.addTab(title + " (0)", panel)
 
         self.add(self.tabs, BorderLayout.CENTER)
+
+    def is_auto_analyze(self):
+        try:
+            return bool(self._auto_cb.isSelected())
+        except Exception:
+            return False
 
     def add_findings(self, new_findings, source_name):
         """Add new findings."""

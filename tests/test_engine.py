@@ -702,5 +702,43 @@ class TestSettingCasts(unittest.TestCase):
             self.assertIn(k, self.keys)
 
 
+class TestIsJsResponse(unittest.TestCase):
+    """Tests for the module-level is_js_response(url, content_type) helper."""
+
+    def _fn(self, url, ct):
+        from js_analyzer_engine import is_js_response
+        return is_js_response(url, ct)
+
+    def test_application_javascript_true(self):
+        self.assertTrue(self._fn('https://x/app', 'application/javascript'))
+
+    def test_text_javascript_true(self):
+        self.assertTrue(self._fn('https://x/app', 'text/javascript'))
+
+    def test_application_json_false(self):
+        self.assertFalse(self._fn('https://x/app', 'application/json'))
+
+    def test_empty_ct_js_url_true(self):
+        self.assertTrue(self._fn('https://x/app.js', ''))
+
+    def test_none_ct_js_url_true(self):
+        self.assertTrue(self._fn('https://x/app.js', None))
+
+    def test_query_stripped_js_true(self):
+        self.assertTrue(self._fn('https://x/app.js?v=2', ''))
+
+    def test_mjs_extension_true(self):
+        self.assertTrue(self._fn('https://x/main.mjs', None))
+
+    def test_css_url_false(self):
+        self.assertFalse(self._fn('/style.css', ''))
+
+    def test_empty_both_false(self):
+        self.assertFalse(self._fn('', ''))
+
+    def test_none_both_false(self):
+        self.assertFalse(self._fn(None, None))
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -5,7 +5,7 @@ Thin adapter: IBurpExtender, IContextMenuFactory, ITab.
 All detection logic lives in js_analyzer_engine (pure Python, no Burp deps).
 """
 
-from burp import IBurpExtender, IContextMenuFactory, ITab, IExtensionStateListener
+from burp import IBurpExtender, IContextMenuFactory, ITab, IExtensionStateListener, IHttpListener
 
 from javax.swing import JMenuItem, SwingUtilities
 from java.awt.event import ActionListener
@@ -49,10 +49,10 @@ if ext_dir and ext_dir not in sys.path:
 
 from ui.results_panel import ResultsPanel
 from ui.active_scan_panel import DiscoveryPanel, DiscoveryConfig
-from js_analyzer_engine import JSAnalyzerEngine, cast_setting, SETTING_KEYS
+from js_analyzer_engine import JSAnalyzerEngine, cast_setting, SETTING_KEYS, is_js_response
 
 
-class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, IExtensionStateListener):
+class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, IExtensionStateListener, IHttpListener):
     """JS Analyzer -- thin Burp adapter delegating all detection to JSAnalyzerEngine."""
 
     def registerExtenderCallbacks(self, callbacks):
@@ -98,6 +98,8 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, IExtensionStateList
         callbacks.registerContextMenuFactory(self)
         callbacks.addSuiteTab(self)
         callbacks.registerExtensionStateListener(self)
+        callbacks.registerHttpListener(self)
+        self._auto_seen = set()
 
         # Load persisted settings (falls back to defaults if first run)
         self._settings = {}
@@ -257,6 +259,33 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, IExtensionStateList
                 _AddFindingsRunnable(self.panel, list(new_findings), source_name))
         else:
             self._log('No new findings')
+
+    def processHttpMessage(self, toolFlag, messageIsRequest, messageInfo):
+        if messageIsRequest:
+            return
+        try:
+            if not self.panel.is_auto_analyze():
+                return
+            # Only proxy traffic, to avoid analyzing our own active-probe requests etc.
+            if toolFlag != self._callbacks.TOOL_PROXY:
+                return
+            resp = messageInfo.getResponse()
+            if not resp:
+                return
+            resp_info = self._helpers.analyzeResponse(resp)
+            ctype = resp_info.getStatedMimeType() or resp_info.getInferredMimeType()
+            url = str(self._helpers.analyzeRequest(messageInfo).getUrl())
+            if not is_js_response(url, ctype):
+                return
+            if url in self._auto_seen:
+                return
+            self._auto_seen.add(url)
+            self._log('Auto-analyzing JS from proxy: ' + url)
+            t = JThread(_AnalyzeRunnable(self, [messageInfo]))
+            t.setDaemon(True)
+            t.start()
+        except Exception as e:
+            self._log('processHttpMessage error: ' + str(e))
 
     def _add_finding(self, category, value, source, label=None):
         """Add a finding if not duplicate.

@@ -410,6 +410,15 @@ def _is_valid_file(value):
     return True
 
 
+def is_js_response(url, content_type):
+    """True if a response looks like JavaScript (by content-type or URL extension)."""
+    ct = (content_type or '').lower()
+    if 'javascript' in ct or 'ecmascript' in ct:
+        return True
+    u = (url or '').split('?')[0].split('#')[0].lower()
+    return u.endswith('.js') or u.endswith('.mjs')
+
+
 # ==================== SETTINGS (pure cast helpers; §4.6) ====================
 # Actual saveExtensionSetting/loadExtensionSetting calls live in the Burp adapter.
 
