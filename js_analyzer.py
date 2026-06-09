@@ -48,6 +48,7 @@ if ext_dir and ext_dir not in sys.path:
     sys.path.insert(0, ext_dir)
 
 from ui.results_panel import ResultsPanel
+from ui.active_scan_panel import DiscoveryPanel, DiscoveryConfig
 from js_analyzer_engine import JSAnalyzerEngine, cast_setting, SETTING_KEYS
 
 
@@ -107,12 +108,15 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, IExtensionStateList
             self._settings['timeout'], self._settings['method']))
 
         # Load persisted discovery config
-        from ui.active_scan_panel import DiscoveryConfig
         self._discovery_config = DiscoveryConfig()
         self._discovery_config.apply_from_settings(self._load_setting_kv)
 
         # Resolve bundled wordlist path
         self._api_txt = os.path.join(ext_dir, 'api.txt')
+
+        # Create the JS Probe tab ONCE at load (always visible, not lazy)
+        self._discovery_panel = DiscoveryPanel(callbacks, self, self._discovery_config)
+        callbacks.addSuiteTab(_DiscoveryTab(self._discovery_panel))
 
         self._log('JS Analyzer loaded - Right-click JS responses to analyze')
 
@@ -381,7 +385,7 @@ class ProbeAction(ActionListener):
                     return
 
             # --- 3. Load + filter wordlist ---
-            from ui.active_scan_panel import WordlistLoader, DiscoveryEngine, DiscoveryPanel
+            from ui.active_scan_panel import WordlistLoader, DiscoveryEngine
             loader = WordlistLoader()
             wl_path = ext._discovery_config.wordlist or ext._api_txt
             try:
@@ -434,12 +438,7 @@ class ProbeAction(ActionListener):
             if choice != JOptionPane.YES_OPTION:
                 return
 
-            # --- 5. Build DiscoveryPanel + DiscoveryEngine and start ---
-            if ext._discovery_panel is None:
-                panel = DiscoveryPanel(ext._callbacks, ext, cfg)
-                ext._discovery_panel = panel
-                ext._callbacks.addSuiteTab(_DiscoveryTab(panel))
-
+            # --- 5. Build DiscoveryEngine and start (panel created at load) ---
             engine = DiscoveryEngine(
                 ext._callbacks, ext._helpers, msg, paths, cfg, ext._discovery_panel
             )

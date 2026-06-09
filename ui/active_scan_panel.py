@@ -16,8 +16,10 @@ Manual verification steps are listed at the bottom of each section.
 from javax.swing import (
     JPanel, JScrollPane, JButton, JLabel, JTable, JComboBox,
     JProgressBar, JTextField, JSplitPane, JOptionPane, JCheckBox,
-    BorderFactory, SwingUtilities, Timer as SwingTimer
+    BorderFactory, SwingUtilities, Timer as SwingTimer, JPopupMenu, JMenuItem,
+    JFileChooser
 )
+from java.awt import Toolkit
 from javax.swing.table import DefaultTableModel
 from java.awt import BorderLayout, FlowLayout, GridBagLayout, GridBagConstraints, Dimension, Color
 from java.awt.event import ActionListener
@@ -187,10 +189,23 @@ class DiscoveryPanel(JPanel):
         save_cfg_btn.addActionListener(_SaveConfigAction(self))
         cfg_row.add(save_cfg_btn)
 
-        # Wrap top + cfg_row in a single north panel
+        # --- wordlist row ---
+        wl_row = JPanel(FlowLayout(FlowLayout.LEFT, 6, 2))
+        wl_row.add(JLabel('Wordlist:'))
+        wl_initial = os.path.basename(self.config.wordlist) if self.config.wordlist else '(default api.txt)'
+        self._wordlist_lbl = JLabel(wl_initial)
+        wl_row.add(self._wordlist_lbl)
+        load_wl_btn = JButton('Load wordlist...')
+        load_wl_btn.addActionListener(_LoadWordlistAction(self))
+        wl_row.add(load_wl_btn)
+
+        # Wrap top + cfg_row + wl_row in a single north panel
         north = JPanel(BorderLayout())
         north.add(top, BorderLayout.NORTH)
-        north.add(cfg_row, BorderLayout.SOUTH)
+        cfg_and_wl = JPanel(BorderLayout())
+        cfg_and_wl.add(cfg_row, BorderLayout.NORTH)
+        cfg_and_wl.add(wl_row, BorderLayout.SOUTH)
+        north.add(cfg_and_wl, BorderLayout.SOUTH)
         self.add(north, BorderLayout.NORTH)
 
         # --- progress bar ---
@@ -208,6 +223,20 @@ class DiscoveryPanel(JPanel):
         self._table.getColumnModel().getColumn(2).setPreferredWidth(70)
         self._table.getColumnModel().getColumn(3).setPreferredWidth(130)
         self._table.getColumnModel().getColumn(4).setPreferredWidth(200)
+
+        # Right-click context menu: Send to Repeater / Intruder / Copy URL
+        popup = JPopupMenu()
+        repeater_item = JMenuItem('Send to Repeater')
+        repeater_item.addActionListener(_SendToRepeaterAction(self))
+        popup.add(repeater_item)
+        intruder_item = JMenuItem('Send to Intruder')
+        intruder_item.addActionListener(_SendToIntruderAction(self))
+        popup.add(intruder_item)
+        copy_url_item = JMenuItem('Copy URL')
+        copy_url_item.addActionListener(_CopyURLAction(self))
+        popup.add(copy_url_item)
+        self._table.setComponentPopupMenu(popup)
+
         scroll = JScrollPane(self._table)
         self.add(scroll, BorderLayout.CENTER)
 
@@ -441,20 +470,29 @@ class DiscoveryEngine(object):
             except Exception:  # nosec B110 - best-effort UI warning push
                 pass
 
+    def build_request_bytes(self, path):
+        """Build raw HTTP request bytes for *path* reusing the engine's template.
+
+        Rewrites the request line, strips body-related headers, and returns
+        the bytes suitable for makeHttpRequest / sendToRepeater / sendToIntruder.
+        Raises on error (callers handle).
+        """
+        req_info = self._helpers.analyzeRequest(self._msg)
+        headers  = list(req_info.getHeaders())   # MUST copy -- unmodifiable
+        # Rewrite request line (headers[0])
+        headers[0] = build_request_line(headers[0], path)
+        # Strip body-related headers
+        to_remove = [h for h in headers
+                     if h.lower().startswith(
+                         ('content-type:', 'content-length:', 'transfer-encoding:'))]
+        for h in to_remove:
+            headers.remove(h)
+        return self._helpers.buildHttpMessage(headers, None)
+
     def _probe(self, path):
         """Build and fire a single GET request; returns IHttpRequestResponse or None."""
         try:
-            req_info = self._helpers.analyzeRequest(self._msg)
-            headers  = list(req_info.getHeaders())   # MUST copy -- unmodifiable
-            # Rewrite request line (headers[0])
-            headers[0] = build_request_line(headers[0], path)
-            # Strip body-related headers
-            to_remove = [h for h in headers
-                         if h.lower().startswith(
-                             ('content-type:', 'content-length:', 'transfer-encoding:'))]
-            for h in to_remove:
-                headers.remove(h)
-            req_bytes = self._helpers.buildHttpMessage(headers, None)
+            req_bytes = self.build_request_bytes(path)
             # Use IHttpService overload (returns IHttpRequestResponse)
             rr = self._callbacks.makeHttpRequest(self._msg.getHttpService(), req_bytes)
             return rr
@@ -716,3 +754,116 @@ class _SaveConfigAction(ActionListener):
         extender = p._extender
         cfg.persist(extender._save_setting)
         p.set_status('Config saved.')
+
+
+# ---------------------------------------------------------------------------
+# _LoadWordlistAction -- opens JFileChooser; updates config.wordlist + label
+# ---------------------------------------------------------------------------
+class _LoadWordlistAction(ActionListener):
+    def __init__(self, panel):
+        self._panel = panel
+
+    def actionPerformed(self, event):
+        chooser = JFileChooser()
+        if chooser.showOpenDialog(self._panel) != JFileChooser.APPROVE_OPTION:
+            return
+        path = chooser.getSelectedFile().getAbsolutePath()
+        self._panel.config.wordlist = path
+        # Persist immediately
+        try:
+            self._panel._extender._save_setting('jsa_wordlist', path)
+        except Exception:  # nosec B110 - best-effort persistence
+            pass
+        label = os.path.basename(path)
+        self._panel._wordlist_lbl.setText(label)
+        self._panel.set_status('Wordlist set: ' + label)
+
+
+# ---------------------------------------------------------------------------
+# Popup helpers: resolve selected path from table
+# ---------------------------------------------------------------------------
+def _get_selected_path_and_engine(panel):
+    """Return (path, engine, svc) for the selected table row, or (None, None, None)."""
+    view_row = panel._table.getSelectedRow()
+    if view_row < 0:
+        panel.set_status('Select a result row first.')
+        return None, None, None
+    if panel._engine is None:
+        panel.set_status('Run a probe first.')
+        return None, None, None
+    model_row = panel._table.convertRowIndexToModel(view_row)
+    path = str(panel._model.getValueAt(model_row, 0))
+    svc = panel._engine._msg.getHttpService()
+    return path, panel._engine, svc
+
+
+# ---------------------------------------------------------------------------
+# _SendToRepeaterAction
+# ---------------------------------------------------------------------------
+class _SendToRepeaterAction(ActionListener):
+    def __init__(self, panel):
+        self._panel = panel
+
+    def actionPerformed(self, event):
+        path, engine, svc = _get_selected_path_and_engine(self._panel)
+        if path is None:
+            return
+        try:
+            req = engine.build_request_bytes(path)
+            host = svc.getHost()
+            port = svc.getPort()
+            use_https = str(svc.getProtocol()).lower() == 'https'
+            self._panel._callbacks.sendToRepeater(host, port, use_https, req, 'JSP ' + path)
+            self._panel.set_status('Sent to Repeater: ' + path)
+        except Exception as e:
+            self._panel.set_status('Repeater error: ' + str(e))
+
+
+# ---------------------------------------------------------------------------
+# _SendToIntruderAction
+# ---------------------------------------------------------------------------
+class _SendToIntruderAction(ActionListener):
+    def __init__(self, panel):
+        self._panel = panel
+
+    def actionPerformed(self, event):
+        path, engine, svc = _get_selected_path_and_engine(self._panel)
+        if path is None:
+            return
+        try:
+            req = engine.build_request_bytes(path)
+            host = svc.getHost()
+            port = svc.getPort()
+            use_https = str(svc.getProtocol()).lower() == 'https'
+            self._panel._callbacks.sendToIntruder(host, port, use_https, req)
+            self._panel.set_status('Sent to Intruder: ' + path)
+        except Exception as e:
+            self._panel.set_status('Intruder error: ' + str(e))
+
+
+# ---------------------------------------------------------------------------
+# _CopyURLAction
+# ---------------------------------------------------------------------------
+class _CopyURLAction(ActionListener):
+    def __init__(self, panel):
+        self._panel = panel
+
+    def actionPerformed(self, event):
+        path, engine, svc = _get_selected_path_and_engine(self._panel)
+        if path is None:
+            return
+        try:
+            proto = str(svc.getProtocol())
+            host = svc.getHost()
+            port = svc.getPort()
+            default_port = (443 if proto.lower() == 'https' else 80)
+            if port == default_port or port == -1:
+                url_str = '%s://%s%s' % (proto, host, path)
+            else:
+                url_str = '%s://%s:%d%s' % (proto, host, port, path)
+            from java.awt.datatransfer import StringSelection
+            clipboard = Toolkit.getDefaultToolkit().getSystemClipboard()
+            clipboard.setContents(StringSelection(url_str), None)
+            self._panel.set_status('Copied: ' + url_str)
+        except Exception as e:
+            self._panel.set_status('Copy error: ' + str(e))
