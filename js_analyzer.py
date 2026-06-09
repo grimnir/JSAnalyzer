@@ -5,7 +5,7 @@ Thin adapter: IBurpExtender, IContextMenuFactory, ITab.
 All detection logic lives in js_analyzer_engine (pure Python, no Burp deps).
 """
 
-from burp import IBurpExtender, IContextMenuFactory, ITab
+from burp import IBurpExtender, IContextMenuFactory, ITab, IExtensionStateListener
 
 from javax.swing import JMenuItem, SwingUtilities
 from java.awt.event import ActionListener
@@ -51,7 +51,7 @@ from ui.results_panel import ResultsPanel
 from js_analyzer_engine import JSAnalyzerEngine, cast_setting, SETTING_KEYS
 
 
-class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
+class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, IExtensionStateListener):
     """JS Analyzer -- thin Burp adapter delegating all detection to JSAnalyzerEngine."""
 
     def registerExtenderCallbacks(self, callbacks):
@@ -66,6 +66,10 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
         # Results storage (dedup and persistence live here, NOT in the engine)
         self.all_findings = []
         self.seen_values = set()
+
+        # Discovery engine reference (set when a scan starts)
+        self._discovery_engine = None
+        self._discovery_panel  = None
 
         # Load wordlist (api.txt next to this file) for dictionary matching.
         # codecs.open gives explicit UTF-8 decoding under both Py2 and Py3.
@@ -92,6 +96,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
 
         callbacks.registerContextMenuFactory(self)
         callbacks.addSuiteTab(self)
+        callbacks.registerExtensionStateListener(self)
 
         # Load persisted settings (falls back to defaults if first run)
         self._settings = {}
@@ -100,6 +105,14 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
         self._log('Settings loaded: threads=%s rate=%s timeout=%s method=%s' % (
             self._settings['threads'], self._settings['rate'],
             self._settings['timeout'], self._settings['method']))
+
+        # Load persisted discovery config
+        from ui.active_scan_panel import DiscoveryConfig
+        self._discovery_config = DiscoveryConfig()
+        self._discovery_config.apply_from_settings(self._load_setting_kv)
+
+        # Resolve bundled wordlist path
+        self._api_txt = os.path.join(ext_dir, 'api.txt')
 
         self._log('JS Analyzer loaded - Right-click JS responses to analyze')
 
@@ -113,9 +126,40 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
             raw = _SETTINGS_DEFAULTS_STR.get(key, '')
         return cast_setting(key, raw)
 
+    def _load_setting_kv(self, key, default):
+        """Load a persisted setting by bare key; returns default if absent.
+        Used by DiscoveryConfig.apply_from_settings (two-arg signature).
+        """
+        try:
+            val = self._callbacks.loadExtensionSetting(key)
+            if val is None:
+                return default
+            if isinstance(default, bool):
+                return val == 'true'
+            if isinstance(default, int):
+                return int(val)
+            return val
+        except Exception:
+            return default
+
     def _save_setting(self, key, value):
-        """Persist a setting. value is Python-typed; stored as string."""
-        self._callbacks.saveExtensionSetting(_SETTINGS_PREFIX + key, str(value))
+        """Persist a setting. value is Python-typed; stored as string.
+        Accepts both bare keys (used by DiscoveryConfig.persist) and
+        prefixed keys (legacy). Always stores as string.
+        """
+        try:
+            self._callbacks.saveExtensionSetting(key, str(value))
+        except Exception:
+            pass
+
+    def extensionUnloaded(self):
+        """IExtensionStateListener -- shut down active scan thread pool on unload."""
+        if self._discovery_engine is not None:
+            try:
+                self._discovery_engine.shutdown()
+            except Exception:
+                pass
+        self._log('JS Analyzer unloaded.')
 
     def getTabCaption(self):
         return 'JS Analyzer'
@@ -131,6 +175,10 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
                 item = JMenuItem('Analyze JS with JS Analyzer')
                 item.addActionListener(AnalyzeAction(self, invocation))
                 menu.add(item)
+                if len(messages) == 1:
+                    probe_item = JMenuItem('Probe endpoints with wordlist')
+                    probe_item.addActionListener(ProbeAction(self, invocation))
+                    menu.add(probe_item)
         except Exception as e:
             self._log('Menu error: ' + str(e))
         return menu
@@ -273,3 +321,134 @@ class AnalyzeAction(ActionListener):
         except Exception as e:
             if self.extender:
                 self.extender._log('Action error: ' + str(e))
+
+
+class ProbeAction(ActionListener):
+    """Context menu action: Probe endpoints with wordlist (WS2)."""
+
+    def __init__(self, extender, invocation):
+        self._extender   = extender
+        self._invocation = invocation
+
+    def actionPerformed(self, event):
+        from javax.swing import JOptionPane
+        from java.net import URL
+
+        ext = self._extender
+        try:
+            messages = self._invocation.getSelectedMessages()
+            if not messages or len(messages) != 1:
+                return
+            msg = messages[0]
+
+            # --- 1. Derive base URL ---
+            req_info = ext._helpers.analyzeRequest(msg)
+            url_obj  = req_info.getUrl()
+            scheme   = url_obj.getProtocol()
+            host     = url_obj.getHost()
+            port     = url_obj.getPort()
+            if port == -1:
+                base_url_str = '%s://%s' % (scheme, host)
+            else:
+                base_url_str = '%s://%s:%d' % (scheme, host, port)
+
+            try:
+                base_java_url = URL(base_url_str)
+            except Exception as e:
+                JOptionPane.showMessageDialog(None,
+                    'Invalid base URL: ' + base_url_str, 'JS Analyzer', JOptionPane.ERROR_MESSAGE)
+                return
+
+            # --- 2. Scope check BEFORE dialog ---
+            if ext._discovery_config.in_scope:
+                if not ext._callbacks.isInScope(base_java_url):
+                    JOptionPane.showMessageDialog(None,
+                        'Target %s is NOT in scope.\n'
+                        'Add it to scope or disable "in-scope only" in Discovery config.' % base_url_str,
+                        'JS Analyzer -- Out of Scope', JOptionPane.WARNING_MESSAGE)
+                    return
+
+            # --- 3. Load + filter wordlist ---
+            from ui.active_scan_panel import WordlistLoader, DiscoveryEngine, DiscoveryPanel
+            loader = WordlistLoader()
+            wl_path = ext._discovery_config.wordlist or ext._api_txt
+            try:
+                paths = loader.load(wl_path)
+            except IOError as e:
+                JOptionPane.showMessageDialog(None,
+                    'Cannot read wordlist: ' + str(e), 'JS Analyzer', JOptionPane.ERROR_MESSAGE)
+                return
+
+            if not ext._discovery_config.destructive:
+                paths = loader.filter_destructive(paths)
+
+            if not paths:
+                JOptionPane.showMessageDialog(None,
+                    'No paths remain after filtering.',
+                    'JS Analyzer', JOptionPane.INFORMATION_MESSAGE)
+                return
+
+            cfg = ext._discovery_config
+            destructive_label = 'YES (destructive paths INCLUDED)' if cfg.destructive else 'no'
+
+            # --- 4. Consent dialog ---
+            msg_text = (
+                'JS Analyzer -- Active Endpoint Probe\n\n'
+                'Host:        %s\n'
+                'Paths:       %d (post-filter)\n'
+                'Method:      %s\n'
+                'Threads:     %d\n'
+                'Rate:        %d req/s\n'
+                'Timeout:     %d s\n'
+                'Destructive: %s\n'
+                'In-scope:    %s\n\n'
+                'WARNING: This sends real HTTP %s requests to the target.\n'
+                'GET requests can still have side effects (caching, logging, etc.).\n\n'
+                'Proceed?'
+            ) % (
+                base_url_str, len(paths), cfg.method,
+                cfg.threads, cfg.rate, cfg.timeout,
+                destructive_label,
+                'yes' if cfg.in_scope else 'no (all hosts)',
+                cfg.method,
+            )
+
+            choice = JOptionPane.showConfirmDialog(
+                None, msg_text,
+                'JS Analyzer -- Confirm Probe',
+                JOptionPane.YES_NO_OPTION,
+                JOptionPane.WARNING_MESSAGE
+            )
+            if choice != JOptionPane.YES_OPTION:
+                return
+
+            # --- 5. Build DiscoveryPanel + DiscoveryEngine and start ---
+            if ext._discovery_panel is None:
+                panel = DiscoveryPanel(ext._callbacks, ext, cfg)
+                ext._discovery_panel = panel
+                ext._callbacks.addSuiteTab(_DiscoveryTab(panel))
+
+            engine = DiscoveryEngine(
+                ext._callbacks, ext._helpers, msg, paths, cfg, ext._discovery_panel
+            )
+            ext._discovery_engine = engine
+            ext._discovery_panel.set_engine(engine)
+            engine.start()
+
+        except Exception as e:
+            ext._log('ProbeAction error: ' + str(e))
+            import traceback
+            ext._log(traceback.format_exc())
+
+
+class _DiscoveryTab(object):
+    """Minimal ITab wrapper for the DiscoveryPanel."""
+
+    def __init__(self, panel):
+        self._panel = panel
+
+    def getTabCaption(self):
+        return 'JS Probe'
+
+    def getUiComponent(self):
+        return self._panel
