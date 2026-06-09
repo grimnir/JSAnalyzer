@@ -149,7 +149,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, IExtensionStateList
         """
         try:
             self._callbacks.saveExtensionSetting(key, str(value))
-        except Exception:
+        except Exception:  # nosec B110 - best-effort settings persistence
             pass
 
     def extensionUnloaded(self):
@@ -157,7 +157,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, IExtensionStateList
         if self._discovery_engine is not None:
             try:
                 self._discovery_engine.shutdown()
-            except Exception:
+            except Exception:  # nosec B110 - best-effort thread-pool cleanup on unload
                 pass
         self._log('JS Analyzer unloaded.')
 

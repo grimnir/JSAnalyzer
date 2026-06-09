@@ -289,7 +289,7 @@ class ResultsPanel(JPanel):
         try:
             clipboard = Toolkit.getDefaultToolkit().getSystemClipboard()
             clipboard.setContents(StringSelection(text), None)
-        except Exception:
+        except Exception:  # nosec B110 - best-effort clipboard copy
             pass
 
     def clear_all(self):

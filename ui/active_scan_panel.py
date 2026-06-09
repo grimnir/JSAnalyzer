@@ -410,7 +410,7 @@ class DiscoveryEngine(object):
         self._timeout_pool.shutdownNow()
         try:
             self._pool.awaitTermination(5, TimeUnit.SECONDS)
-        except Exception:
+        except Exception:  # nosec B110 - InterruptedException during pool await is expected
             pass
         self._drain_timer.stop()
 
@@ -433,7 +433,7 @@ class DiscoveryEngine(object):
                     SwingUtilities.invokeLater(
                         _StatusRunnable(self._panel,
                                         'Warning: server returns 200 for random paths (soft-404)'))
-            except Exception:
+            except Exception:  # nosec B110 - best-effort UI warning push
                 pass
 
     def _probe(self, path):
@@ -473,7 +473,7 @@ class DiscoveryEngine(object):
                                 'Auto-paused: 20 consecutive errors. Retrying in 5s.'))
             try:
                 JThread.sleep(5000)
-            except Exception:
+            except Exception:  # nosec B110 - InterruptedException during auto-pause sleep is expected
                 pass
 
 
@@ -505,20 +505,20 @@ class _DispatcherRunnable(Runnable):
                 if sleep_ms > 0:
                     try:
                         JThread.sleep(sleep_ms)
-                    except Exception:
+                    except Exception:  # nosec B110 - InterruptedException during rate-limit sleep is expected
                         pass
             last_send_ns = System.nanoTime()
             task = ProbeTask(e, path)
             try:
                 e._pool.submit(task)
-            except Exception:
+            except Exception:  # nosec B110 - task rejected after stop/shutdown is expected
                 pass
 
         # Wait for pool to drain then signal UI
         e._pool.shutdown()
         try:
             e._pool.awaitTermination(60, TimeUnit.SECONDS)
-        except Exception:
+        except Exception:  # nosec B110 - InterruptedException during pool await is expected
             pass
         e._drain_timer.stop()
         SwingUtilities.invokeLater(_PanelFinishRunnable(e._panel))
@@ -679,15 +679,15 @@ class _SaveConfigAction(ActionListener):
         cfg = p.config
         try:
             cfg.set_threads(p._threads_field.getText().strip())
-        except Exception:
+        except Exception:  # nosec B110 - invalid threads field falls back to current value
             pass
         try:
             cfg.set_rate(p._rate_field.getText().strip())
-        except Exception:
+        except Exception:  # nosec B110 - invalid rate field falls back to current value
             pass
         try:
             cfg.set_timeout(p._timeout_field.getText().strip())
-        except Exception:
+        except Exception:  # nosec B110 - invalid timeout field falls back to current value
             pass
         cfg.destructive = p._destructive_cb.isSelected()
         cfg.in_scope    = p._inscope_cb.isSelected()
