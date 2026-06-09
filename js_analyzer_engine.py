@@ -54,6 +54,40 @@ def _norm_path(p):
     return '/'.join(_norm_seg(s) for s in p.split('/'))
 
 
+# ---------------------------------------------------------------------------
+# §2.3  Candidate extraction & match
+# ---------------------------------------------------------------------------
+_DICT_CAND = re.compile(r'[A-Za-z0-9_.~-]+(?:/[A-Za-z0-9_.~-]+)+')
+
+
+def _match_dict(body, idx, cap=500):
+    """Extract path-like candidates from body and match against the index.
+
+    Single pass over the body; for each candidate, normalise its segments and
+    walk longest-prefix-first, returning the first (longest) prefix present in
+    the index. Returns a list of (template, evidence) tuples capped at `cap`.
+    """
+    out = []
+    seen = set()
+    for m in _DICT_CAND.finditer(body):
+        c = m.group(0).lower().lstrip('/')
+        if len(c) > 512 or c.count('/') > 12:
+            continue
+        segs = [_norm_seg(s) for s in c.split('/')]
+        if len(segs) < 2:
+            continue
+        for k in range(len(segs), 1, -1):     # longest-prefix walk
+            tmpl = '/'.join(segs[:k])
+            if tmpl in idx:
+                if tmpl not in seen:
+                    seen.add(tmpl)
+                    out.append((tmpl, m.group(0)))
+                    if len(out) >= cap:
+                        return out
+                break
+    return out
+
+
 # ==================== ENDPOINT PATTERNS ====================
 # Copied verbatim from js_analyzer.py lines 38-67
 
@@ -336,10 +370,12 @@ class JSAnalyzerEngine(object):
     """
 
     def __init__(self, wordlist=None):
-        # Phase 0: index deferred to Phase 1. Store empty frozenset.
-        self._index = frozenset()
-        # wordlist stored for Phase 1 wiring; unused in Phase 0.
-        self._wordlist = wordlist
+        # Build the normalized path index once (read-only thereafter).
+        # No wordlist -> empty frozenset -> dictionary matching disabled.
+        if wordlist is not None:
+            self._index = JSAnalyzerEngine._build_index(wordlist)
+        else:
+            self._index = frozenset()
 
     def analyze(self, js_text, source=None):
         """Analyze a JavaScript body and return findings.
@@ -432,8 +468,9 @@ class JSAnalyzerEngine(object):
             except (IndexError, Exception):
                 continue
 
-        # 6. Dictionary -- Phase 0 stub (always empty until Phase 1)
-        # result['dictionary'] stays []
+        # 6. Dictionary -- §2.3 passive matching (only when a wordlist is loaded)
+        if self._index:
+            result['dictionary'] = _match_dict(js_text, self._index, cap=500)
 
         return result
 

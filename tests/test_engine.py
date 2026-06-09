@@ -331,5 +331,118 @@ class TestValidators(unittest.TestCase):
         self.assertTrue(_is_valid_file('settings.json'))
 
 
+# ---------------------------------------------------------------------------
+# TestDictionaryMatching  (spec §5 dictionary tests, verbatim)
+# ---------------------------------------------------------------------------
+
+class TestDictionaryMatching(unittest.TestCase):
+    """Spec §5 dictionary tests — all must pass once _build_index/_match_dict
+    are wired into JSAnalyzerEngine.analyze()."""
+
+    # Minimal wordlist that exercises the index
+    WORDLIST = [
+        'api/v1/users/{id}',        # stored as-is after lowercasing; {id} passes through _norm_seg unchanged (contains '{')
+        'api/v1/users',
+        'api/v1/settings',
+        'api/v1/users/{id}/settings',  # prefix of a longer path
+        # raw (un-normalised) line: engine must normalise before storing
+        'reports/2024/summary',
+        'repos/deadbeefcafe0001deadbeef/commits',   # long-hex seg in wordlist
+    ]
+
+    def setUp(self):
+        from js_analyzer_engine import JSAnalyzerEngine
+        self.engine = JSAnalyzerEngine(wordlist=self.WORDLIST)
+
+    # --- numeric id matches template ---
+    def test_numeric_id_matches_template(self):
+        body = 'fetch("/api/v1/users/99999")'
+        result = self.engine.analyze(body)
+        templates = [t for t, _ in result['dictionary']]
+        self.assertIn('api/v1/users/{id}', templates)
+
+    # --- uuid segment matches ---
+    def test_uuid_segment_matches(self):
+        body = 'url = "api/v1/users/550e8400-e29b-41d4-a716-446655440000"'
+        result = self.engine.analyze(body)
+        templates = [t for t, _ in result['dictionary']]
+        self.assertIn('api/v1/users/{id}', templates)
+
+    # --- alpha-only extra segment NOT promoted to {id} match ---
+    def test_alpha_segment_not_promoted(self):
+        # 'api/v1/users/abc' — 'abc' is alpha, not a number/uuid/hex16
+        # 'api/v1/users/abc' does NOT match 'api/v1/users/{id}'
+        body = '"api/v1/users/abc"'
+        result = self.engine.analyze(body)
+        templates = [t for t, _ in result['dictionary']]
+        self.assertNotIn('api/v1/users/{id}', templates)
+
+    # --- exact match (lowercased) ---
+    def test_exact_match_lowercased(self):
+        body = 'path = "API/V1/SETTINGS"'
+        result = self.engine.analyze(body)
+        templates = [t for t, _ in result['dictionary']]
+        self.assertIn('api/v1/settings', templates)
+
+    # --- no-match returns empty ---
+    def test_no_match_returns_empty(self):
+        body = 'console.log("hello world")'
+        result = self.engine.analyze(body)
+        self.assertEqual(result['dictionary'], [])
+
+    # --- _build_index deduplicates ---
+    def test_build_index_dedup(self):
+        from js_analyzer_engine import JSAnalyzerEngine
+        duped = ['api/v1/users', 'api/v1/users', 'API/V1/USERS']
+        e = JSAnalyzerEngine(wordlist=duped)
+        # Frozenset — length must be 1
+        self.assertEqual(len(e._index), 1)
+
+    # --- prefix match on extra trailing segment ---
+    def test_prefix_match_extra_trailing_segment(self):
+        # candidate 'api/v1/users/42/settings/extra' should match the
+        # longest prefix that exists in the index:
+        # 'api/v1/users/{id}/settings' (4 segs match the 4-seg wordlist entry)
+        body = '"api/v1/users/42/settings/extra"'
+        result = self.engine.analyze(body)
+        templates = [t for t, _ in result['dictionary']]
+        self.assertIn('api/v1/users/{id}/settings', templates)
+
+    # --- cap enforced ---
+    def test_cap_enforced(self):
+        from js_analyzer_engine import JSAnalyzerEngine, _match_dict
+        # Build a large wordlist of distinct paths
+        lines = ['api/v1/item%d' % i for i in range(1000)]
+        e = JSAnalyzerEngine(wordlist=lines)
+        # Build body with many distinct matching candidates (with a numeric id)
+        candidates = ' '.join('"api/v1/item%d/42"' % i for i in range(1000))
+        result = e.analyze(candidates)
+        self.assertLessEqual(len(result['dictionary']), 500)
+
+    # --- result has all 6 keys ---
+    def test_analyze_always_has_dictionary_key(self):
+        from js_analyzer_engine import JSAnalyzerEngine
+        e = JSAnalyzerEngine()   # no wordlist
+        result = e.analyze('')
+        self.assertIn('dictionary', result)
+        self.assertIsInstance(result['dictionary'], list)
+
+    # --- two differing concrete ids -> exactly 1 template finding ---
+    def test_two_concrete_ids_one_template(self):
+        body = '"api/v1/users/1" "api/v1/users/2"'
+        result = self.engine.analyze(body)
+        templates = [t for t, _ in result['dictionary']]
+        self.assertEqual(templates.count('api/v1/users/{id}'), 1)
+
+    # --- long-hex segment in candidate matches long-hex wordlist entry ---
+    def test_long_hex_wordlist_entry(self):
+        body = '"repos/abcdef0123456789abcdef0123456789/commits"'
+        result = self.engine.analyze(body)
+        templates = [t for t, _ in result['dictionary']]
+        # wordlist has 'repos/deadbeefcafe0001deadbeef/commits'
+        # normalised: 'repos/{id}/commits'
+        self.assertIn('repos/{id}/commits', templates)
+
+
 if __name__ == '__main__':
     unittest.main()
