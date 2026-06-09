@@ -594,5 +594,58 @@ class TestSecretFalsePositives(unittest.TestCase):
                 'secret value field must be raw (unmasked)')
 
 
+class TestRelativePaths(unittest.TestCase):
+    def setUp(self):
+        from js_analyzer_engine import JSAnalyzerEngine
+        self.engine = JSAnalyzerEngine()
+
+    def _endpoints(self, text):
+        return self.engine.analyze(text)['endpoints']
+
+    def test_relative_api_path_detected(self):
+        text = 'fetch("api/v1/users")'
+        eps = self._endpoints(text)
+        self.assertTrue(
+            any('api/v1/users' in ep for ep in eps),
+            'relative api/v1/users must be detected; got: %r' % eps)
+
+    def test_relative_graphql_path_detected(self):
+        text = 'url = "graphql/query"'
+        eps = self._endpoints(text)
+        self.assertTrue(
+            any('graphql/query' in ep for ep in eps),
+            'relative graphql/query must be detected')
+
+    def test_relative_v2_path_detected(self):
+        text = 'endpoint = "v2/products/list"'
+        eps = self._endpoints(text)
+        self.assertTrue(
+            any('v2/products/list' in ep for ep in eps),
+            'relative v2/products/list must be detected')
+
+    def test_absolute_path_still_works(self):
+        text = 'path = "/api/v1/login"'
+        eps = self._endpoints(text)
+        self.assertTrue(
+            any('/api/v1/login' in ep for ep in eps),
+            'absolute /api/v1/login must still be detected')
+
+    def test_relative_too_short_rejected(self):
+        # "api/x" — path segment after prefix is only 1 char (< 3 total after prefix)
+        text = 'url = "api/x"'
+        eps = self._endpoints(text)
+        self.assertFalse(
+            any(ep == 'api/x' for ep in eps),
+            'api/x is too short and must be rejected')
+
+    def test_plain_filename_not_relative_endpoint(self):
+        text = 'src = "utils/helper.js"'
+        eps = self._endpoints(text)
+        # helper.js ends with .js -> noise pattern rejects it
+        self.assertFalse(
+            any('utils/helper.js' in ep for ep in eps),
+            'JS file path must not be reported as relative endpoint')
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -123,6 +123,10 @@ ENDPOINT_PATTERNS = [
     # Well-known paths
     (re.compile(r'["\'](/\.well-known/[a-zA-Z0-9/_-]+)["\']', re.IGNORECASE), 'Well-known'),
     (re.compile(r'["\'](/idp/[a-zA-Z0-9/_-]+)["\']', re.IGNORECASE), 'Well-known'),
+
+    # Relative API paths (no leading slash) -- §4.5
+    (re.compile(r'["\']((api|graphql|rest|v\d+)/[a-zA-Z0-9_/.-]{3,100})["\']'),
+     'Relative API Path'),
 ]
 
 # ==================== URL PATTERNS ====================
