@@ -18,6 +18,42 @@ import re
 import math
 
 
+# ---------------------------------------------------------------------------
+# §2.1  Normalization helpers — module-level constants (ONE definition each)
+# ---------------------------------------------------------------------------
+
+_SEG_NUM  = re.compile(r'^\d+$')
+_SEG_VER  = re.compile(r'^\d+([._-]\d+)+$')          # 1.0  24_8_0  85-88-31
+_SEG_UUID = re.compile(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+    re.IGNORECASE
+)
+_SEG_HEX  = re.compile(r'^[0-9a-f]{16,}$', re.IGNORECASE)   # >= 16 hex chars
+
+
+def _norm_seg(s):
+    """Collapse dynamic path segments to '{id}'; first match wins.
+
+    Module-level so it can be imported directly:
+        from js_analyzer_engine import _norm_seg
+    JSAnalyzerEngine._norm_seg delegates here.
+    """
+    if (_SEG_NUM.match(s) or _SEG_UUID.match(s) or
+            _SEG_HEX.match(s) or _SEG_VER.match(s)):
+        return '{id}'
+    return s
+
+
+def _norm_path(p):
+    """Normalise every segment of a URL path independently.
+
+    Module-level so it can be imported directly:
+        from js_analyzer_engine import _norm_path
+    JSAnalyzerEngine._norm_path delegates here.
+    """
+    return '/'.join(_norm_seg(s) for s in p.split('/'))
+
+
 # ==================== ENDPOINT PATTERNS ====================
 # Copied verbatim from js_analyzer.py lines 38-67
 
