@@ -72,6 +72,9 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, IExtensionStateList
         self._discovery_engine = None
         self._discovery_panel  = None
 
+        # In-memory custom wordlist fed from passive findings bridge (Task 2)
+        self._custom_wordlist = None
+
         # Load wordlist (api.txt next to this file) for dictionary matching.
         # codecs.open gives explicit UTF-8 decoding under both Py2 and Py3.
         # Missing/unreadable file is non-fatal: engine runs with an empty index.
@@ -316,6 +319,15 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab, IExtensionStateList
         self.all_findings = []
         self.seen_values = set()
 
+    def set_custom_wordlist(self, paths):
+        """paths: list of probe-path strings (already converted). Stored in-memory and
+        used by the next active probe instead of the file wordlist."""
+        self._custom_wordlist = [p for p in paths if p]
+        n = len(self._custom_wordlist)
+        if self._discovery_panel is not None:
+            self._discovery_panel.set_wordlist_label('passive findings (%d paths)' % n)
+        self._log('JS Probe wordlist set from passive findings: %d paths' % n)
+
     def get_all_findings(self):
         return self.all_findings
 
@@ -415,14 +427,18 @@ class ProbeAction(ActionListener):
 
             # --- 3. Load + filter wordlist ---
             from ui.active_scan_panel import WordlistLoader, DiscoveryEngine
-            loader = WordlistLoader()
-            wl_path = ext._discovery_config.wordlist or ext._api_txt
-            try:
-                paths = loader.load(wl_path)
-            except IOError as e:
-                JOptionPane.showMessageDialog(None,
-                    'Cannot read wordlist: ' + str(e), 'JS Analyzer', JOptionPane.ERROR_MESSAGE)
-                return
+            from discovery_logic import _sanitize
+            if ext._custom_wordlist:
+                paths = _sanitize(ext._custom_wordlist)
+            else:
+                loader = WordlistLoader()
+                wl_path = ext._discovery_config.wordlist or ext._api_txt
+                try:
+                    paths = loader.load(wl_path)
+                except IOError as e:
+                    JOptionPane.showMessageDialog(None,
+                        'Cannot read wordlist: ' + str(e), 'JS Analyzer', JOptionPane.ERROR_MESSAGE)
+                    return
 
             if not ext._discovery_config.destructive:
                 paths = loader.filter_destructive(paths)

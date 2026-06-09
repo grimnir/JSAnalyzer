@@ -267,6 +267,10 @@ class DiscoveryPanel(JPanel):
     def set_engine(self, engine):
         self._engine = engine
 
+    def set_wordlist_label(self, text):
+        """Update the wordlist label (used by passive->active bridge)."""
+        self._wordlist_lbl.setText(text)
+
     def set_status(self, text):
         """Update status label from EDT."""
         self._status_lbl.setText(text)
@@ -820,6 +824,8 @@ class _LoadWordlistAction(ActionListener):
             self._panel._extender._save_setting('jsa_wordlist', path)
         except Exception:  # nosec B110 - best-effort persistence
             pass
+        # An explicitly chosen file overrides any passive-bridge wordlist
+        self._panel._extender._custom_wordlist = None
         label = os.path.basename(path)
         self._panel._wordlist_lbl.setText(label)
         self._panel.set_status('Wordlist set: ' + label)

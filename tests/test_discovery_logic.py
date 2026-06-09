@@ -351,5 +351,34 @@ class TestBuildRequestLine(unittest.TestCase):
             self._fn('GET /old HTTP/1.1', '')
 
 
+class TestToProbePath(unittest.TestCase):
+    """to_probe_path(value) -- passive->active bridge helper."""
+
+    def setUp(self):
+        from discovery_logic import to_probe_path
+        self._fn = to_probe_path
+
+    def test_full_url_strips_scheme_and_host(self):
+        self.assertEqual(self._fn('https://h/api/v1/users'), '/api/v1/users')
+
+    def test_template_id_replaced_with_1(self):
+        self.assertEqual(self._fn('api/v1/users/{id}'), '/api/v1/users/1')
+
+    def test_already_absolute_path_unchanged(self):
+        self.assertEqual(self._fn('/api/v1/login'), '/api/v1/login')
+
+    def test_url_with_query_and_fragment_stripped(self):
+        self.assertEqual(self._fn('https://h/a?x=1#y'), '/a')
+
+    def test_url_host_only_returns_slash(self):
+        self.assertEqual(self._fn('https://h'), '/')
+
+    def test_empty_string_returns_empty(self):
+        self.assertEqual(self._fn(''), '')
+
+    def test_relative_path_gets_leading_slash(self):
+        self.assertEqual(self._fn('api/x'), '/api/x')
+
+
 if __name__ == '__main__':
     unittest.main()

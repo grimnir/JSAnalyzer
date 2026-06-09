@@ -15,6 +15,16 @@ from java.awt import BorderLayout, FlowLayout, Font, Dimension, Toolkit
 from java.awt.datatransfer import StringSelection
 from java.awt.event import ActionListener, KeyListener, KeyEvent
 import json
+import sys as _sys
+import os as _os
+
+# Ensure the project root (parent of ui/) is on sys.path so discovery_logic
+# can be imported the same way csv_utils is imported (ui/ dir insert mirrors it).
+_ui_dir = _os.path.dirname(_os.path.abspath(__file__))
+_proj_root = _os.path.dirname(_ui_dir)
+if _proj_root not in _sys.path:
+    _sys.path.insert(0, _proj_root)
+from discovery_logic import to_probe_path
 
 
 class ResultsPanel(JPanel):
@@ -158,11 +168,24 @@ class ResultsPanel(JPanel):
 
             self.tables[key] = table
 
-            # Per-tab right-click popup for CSV export
+            # Per-tab right-click popup
             popup = JPopupMenu()
+
             tab_csv_item = JMenuItem("Export this tab as CSV")
             tab_csv_item.addActionListener(_TabCsvAction(self, key))
             popup.add(tab_csv_item)
+
+            # "Send to JS Probe wordlist" -- wired for all tabs; harmless on
+            # secrets/emails/files (paths that parse to '' are dropped by bridge).
+            probe_item = JMenuItem("Send these to JS Probe wordlist")
+            probe_item.addActionListener(_SendToProbeAction(self, key))
+            popup.add(probe_item)
+
+            # "Send to Repeater" -- for URLs tab and any value starting with http
+            repeater_item = JMenuItem("Send to Repeater")
+            repeater_item.addActionListener(_SendToRepeaterAction(self, key))
+            popup.add(repeater_item)
+
             table.setComponentPopupMenu(popup)
 
             scroll = JScrollPane(table)
@@ -492,3 +515,83 @@ class _TabCsvAction(ActionListener):
 
     def actionPerformed(self, event):
         self.panel._export_csv(category=self.category)
+
+
+class _SendToProbeAction(ActionListener):
+    """Collect all values visible in the tab, convert via to_probe_path,
+    dedupe preserving order, and hand to extender.set_custom_wordlist()."""
+
+    def __init__(self, panel, key):
+        self.panel = panel
+        self.key = key
+
+    def actionPerformed(self, event):
+        panel = self.panel
+        key = self.key
+        model = panel.models.get(key)
+        if model is None:
+            return
+        # For secrets tab, value column is index 1; for all others index 0.
+        val_col = 1 if key == 'secrets' else 0
+        seen = set()
+        paths = []
+        for i in range(model.getRowCount()):
+            raw = model.getValueAt(i, val_col)
+            if raw is None:
+                continue
+            p = to_probe_path(str(raw))
+            if p and p not in seen:
+                seen.add(p)
+                paths.append(p)
+        try:
+            panel.extender.set_custom_wordlist(paths)
+        except Exception as ex:
+            try:
+                panel.extender._log('SendToProbe error: ' + str(ex))
+            except Exception:
+                pass
+
+
+class _SendToRepeaterAction(ActionListener):
+    """Send the selected row's URL to Burp Repeater.
+
+    Operates on the selected row (single selection); works on any tab where
+    the value column contains an http/https URL.
+    """
+
+    def __init__(self, panel, key):
+        self.panel = panel
+        self.key = key
+
+    def actionPerformed(self, event):
+        panel = self.panel
+        key = self.key
+        table = panel.tables.get(key)
+        if table is None:
+            return
+        view_row = table.getSelectedRow()
+        if view_row < 0:
+            return
+        model_row = table.convertRowIndexToModel(view_row)
+        val_col = 1 if key == 'secrets' else 0
+        raw = table.getModel().getValueAt(model_row, val_col)
+        if raw is None:
+            return
+        url = str(raw).strip()
+        if not url.lower().startswith('http'):
+            return
+        try:
+            from java.net import URL as JURL
+            u = JURL(url)
+            use_https = (u.getProtocol().lower() == 'https')
+            port = u.getPort()
+            if port == -1:
+                port = 443 if use_https else 80
+            req = panel.callbacks.getHelpers().buildHttpRequest(u)
+            panel.callbacks.sendToRepeater(
+                u.getHost(), port, use_https, req, 'JSA ' + u.getHost())
+        except Exception as ex:
+            try:
+                panel.extender._log('SendToRepeater error: ' + str(ex))
+            except Exception:
+                pass

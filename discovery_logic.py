@@ -95,6 +95,37 @@ def soft404_fingerprint(status, body_len, body):
 
 
 # ---------------------------------------------------------------------------
+# Passive->active bridge: convert a passive finding to a concrete probe path
+# ---------------------------------------------------------------------------
+def to_probe_path(value):
+    """Convert a passive finding (endpoint/url/dictionary template) to a concrete
+    probe path. Strips scheme+host from full URLs, replaces '{id}' templates with a
+    sample '1', strips query/fragment, ensures a single leading '/'. Returns '' if
+    nothing usable remains."""
+    if not value:
+        return ''
+    v = value.strip()
+    # strip scheme://host
+    if '://' in v:
+        rest = v.split('://', 1)[1]
+        slash = rest.find('/')
+        v = rest[slash:] if slash != -1 else '/'
+    # cut query/fragment
+    v = v.split('?', 1)[0].split('#', 1)[0]
+    # template id -> sample
+    v = v.replace('{id}', '1')
+    v = v.strip()
+    if not v:
+        return ''
+    if not v.startswith('/'):
+        v = '/' + v
+    # collapse leading duplicate slashes
+    while v.startswith('//'):
+        v = v[1:]
+    return v
+
+
+# ---------------------------------------------------------------------------
 # Pure request-line builder (testable without Burp)
 # ---------------------------------------------------------------------------
 def build_request_line(original_line, path):
