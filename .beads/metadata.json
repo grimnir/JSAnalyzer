@@ -1,7 +1,0 @@
-{
-  "database": "dolt",
-  "backend": "dolt",
-  "dolt_mode": "embedded",
-  "dolt_database": "JSAnalyzer_main",
-  "project_id": "6e69151e-53d9-410c-92b0-03e1d77646d3"
-}

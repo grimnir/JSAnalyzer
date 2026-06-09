@@ -29,3 +29,11 @@ test_*.js
 *.db
 .beads-credential-key
 .beads/proxieddb/
+
+# Internal tooling / local agent config (not for distribution)
+.claude/
+.beads/
+
+# Bandit cache
+.bandit
+
