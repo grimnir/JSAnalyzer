@@ -42,13 +42,15 @@ class DiscoveryConfig(object):
     RATE_CEILING   = 100
 
     def __init__(self):
-        self.threads     = 10
-        self.rate        = 20        # req/s
-        self.timeout     = 10        # seconds per request
-        self.method      = 'GET'
-        self.destructive = False
-        self.in_scope    = True
-        self.wordlist    = ''        # path to wordlist file; '' = use bundled api.txt
+        self.threads        = 10
+        self.rate           = 20        # req/s
+        self.timeout        = 10        # seconds per request
+        self.method         = 'GET'
+        self.destructive    = False
+        self.in_scope       = True
+        self.wordlist       = ''        # path to wordlist file; '' = use bundled api.txt
+        self.show_all       = False     # Feature B: record all non-soft-404 responses
+        self.add_to_sitemap = False     # Feature C: addToSiteMap() on recorded results
 
     def set_threads(self, v):
         self.threads = max(1, min(int(v), self.THREAD_CEILING))
@@ -64,10 +66,13 @@ class DiscoveryConfig(object):
         self.set_threads(load_fn('jsa_threads', 10))
         self.set_rate(load_fn('jsa_rate', 20))
         self.set_timeout(load_fn('jsa_timeout', 10))
-        self.method      = str(load_fn('jsa_method', 'GET'))
-        self.destructive = str(load_fn('jsa_destructive', 'false')) == 'true'
-        self.in_scope    = str(load_fn('jsa_inscope', 'true')) == 'true'
-        self.wordlist    = str(load_fn('jsa_wordlist', ''))
+        raw_method          = str(load_fn('jsa_method', 'GET')).upper()
+        self.method         = raw_method if raw_method in ('GET', 'HEAD') else 'GET'
+        self.destructive    = str(load_fn('jsa_destructive', 'false')) == 'true'
+        self.in_scope       = str(load_fn('jsa_inscope', 'true')) == 'true'
+        self.wordlist       = str(load_fn('jsa_wordlist', ''))
+        self.show_all       = str(load_fn('jsa_showall', 'false')) == 'true'
+        self.add_to_sitemap = str(load_fn('jsa_sitemap', 'false')) == 'true'
 
     def persist(self, save_fn):
         """Persist current values via save_fn(key, value)."""
@@ -78,6 +83,8 @@ class DiscoveryConfig(object):
         save_fn('jsa_destructive', 'true' if self.destructive else 'false')
         save_fn('jsa_inscope',     'true' if self.in_scope else 'false')
         save_fn('jsa_wordlist',    self.wordlist)
+        save_fn('jsa_showall',     'true' if self.show_all else 'false')
+        save_fn('jsa_sitemap',     'true' if self.add_to_sitemap else 'false')
 
 
 # ---------------------------------------------------------------------------
@@ -179,11 +186,23 @@ class DiscoveryPanel(JPanel):
         self._timeout_field = JTextField(str(self.config.timeout), 4)
         cfg_row.add(self._timeout_field)
 
+        cfg_row.add(JLabel('Method:'))
+        self._method_combo = JComboBox(['GET', 'HEAD'])
+        self._method_combo.setSelectedItem(
+            self.config.method if self.config.method in ('GET', 'HEAD') else 'GET')
+        cfg_row.add(self._method_combo)
+
         self._destructive_cb = JCheckBox('Allow destructive', self.config.destructive)
         cfg_row.add(self._destructive_cb)
 
         self._inscope_cb = JCheckBox('In-scope only', self.config.in_scope)
         cfg_row.add(self._inscope_cb)
+
+        self._showall_cb = JCheckBox('Show all (incl. 404)', self.config.show_all)
+        cfg_row.add(self._showall_cb)
+
+        self._sitemap_cb = JCheckBox('Add to Site map', self.config.add_to_sitemap)
+        cfg_row.add(self._sitemap_cb)
 
         save_cfg_btn = JButton('Save config')
         save_cfg_btn.addActionListener(_SaveConfigAction(self))
@@ -479,8 +498,16 @@ class DiscoveryEngine(object):
         """
         req_info = self._helpers.analyzeRequest(self._msg)
         headers  = list(req_info.getHeaders())   # MUST copy -- unmodifiable
-        # Rewrite request line (headers[0])
+        # Rewrite request line (headers[0]) with the configured path
         headers[0] = build_request_line(headers[0], path)
+        # Feature A: replace method token with configured method (GET/HEAD only;
+        # clamp anything that slipped through to GET so POST/PUT/DELETE never fire).
+        parts = headers[0].split(' ')
+        configured_method = self._config.method.upper()
+        if configured_method not in ('GET', 'HEAD'):
+            configured_method = 'GET'
+        parts[0] = configured_method
+        headers[0] = ' '.join(parts)
         # Strip body-related headers
         to_remove = [h for h in headers
                      if h.lower().startswith(
@@ -621,11 +648,16 @@ class ProbeTask(Runnable):
 
             fp = soft404_fingerprint(status, length, body)
 
+            # Soft-404 suppression always takes priority (even in show_all mode)
+            # so a catch-all target doesn't flood the table with identical rows.
             if e._is_soft404(fp):
                 e._soft404.incrementAndGet()
                 return
 
-            if not is_interesting(status, has_loc):
+            # Feature B: in show_all mode, bypass is_interesting() so 404 and
+            # other non-interesting responses (with distinct fingerprints) are
+            # still recorded.  Without show_all, only interesting codes pass.
+            if not (is_interesting(status, has_loc) or e._config.show_all):
                 return
 
             meta = {
@@ -636,6 +668,13 @@ class ProbeTask(Runnable):
                 'redirect': location,
             }
             e.record_result(meta)
+            # Feature C: add to Burp Site map (only recorded results, never
+            # soft-404s or dropped probes).
+            if e._config.add_to_sitemap:
+                try:
+                    e._callbacks.addToSiteMap(rr)
+                except Exception:  # nosec B110 - best-effort site-map addition
+                    pass
             e._error_streak.set(0)
 
         except Exception:
@@ -750,6 +789,13 @@ class _SaveConfigAction(ActionListener):
             pass
         cfg.destructive = p._destructive_cb.isSelected()
         cfg.in_scope    = p._inscope_cb.isSelected()
+        # Feature A: method selector (GET/HEAD only; clamp anything else to GET)
+        raw_method  = str(p._method_combo.getSelectedItem()).upper()
+        cfg.method  = raw_method if raw_method in ('GET', 'HEAD') else 'GET'
+        # Feature B: show-all mode
+        cfg.show_all = p._showall_cb.isSelected()
+        # Feature C: add to site map
+        cfg.add_to_sitemap = p._sitemap_cb.isSelected()
         # Persist via extender's _save_setting
         extender = p._extender
         cfg.persist(extender._save_setting)
