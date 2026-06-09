@@ -15,6 +15,7 @@ from java.io import PrintWriter
 import sys
 import os
 import inspect
+import codecs
 
 # Add extension directory to path so Jython can find js_analyzer_engine.py
 # and ui/results_panel.py at the same level.
@@ -50,8 +51,25 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
         self.all_findings = []
         self.seen_values = set()
 
+        # Load wordlist (api.txt next to this file) for dictionary matching.
+        # codecs.open gives explicit UTF-8 decoding under both Py2 and Py3.
+        # Missing/unreadable file is non-fatal: engine runs with an empty index.
+        wordlist_lines = []
+        try:
+            _wl_path = os.path.join(ext_dir, 'api.txt')
+            _wl_fh = codecs.open(_wl_path, 'r', 'utf-8')
+            try:
+                wordlist_lines = _wl_fh.readlines()
+            finally:
+                _wl_fh.close()
+            self._log('Loaded wordlist: %d lines from api.txt' % len(wordlist_lines))
+        except IOError:
+            self._log('api.txt not found - dictionary matching disabled')
+        except Exception as _wl_err:
+            self._log('api.txt load error: ' + str(_wl_err))
+
         # Pure detection engine -- stateless per call
-        self._engine = JSAnalyzerEngine()
+        self._engine = JSAnalyzerEngine(wordlist=wordlist_lines if wordlist_lines else None)
 
         # Initialize UI
         self.panel = ResultsPanel(callbacks, self)

@@ -30,6 +30,7 @@ class ResultsPanel(JPanel):
             "secrets": [],
             "emails": [],
             "files": [],
+            "dictionary": [],
         }
         
         # Unique sources
@@ -49,7 +50,7 @@ class ResultsPanel(JPanel):
         left_panel = JPanel(FlowLayout(FlowLayout.LEFT, 5, 0))
         left_panel.add(JLabel("JS Analyzer"))
         
-        self.stats_label = JLabel("| E:0 | U:0 | S:0 | M:0")
+        self.stats_label = JLabel("| E:0 | U:0 | S:0 | M:0 | F:0 | D:0")
         self.stats_label.setFont(Font("SansSerif", Font.PLAIN, 11))
         left_panel.add(self.stats_label)
         header.add(left_panel, BorderLayout.WEST)
@@ -100,18 +101,16 @@ class ResultsPanel(JPanel):
         self.models = {}
         
         categories = [
-            ("Endpoints", "endpoints"),
-            ("URLs", "urls"),
-            ("Secrets", "secrets"),
-            ("Emails", "emails"),
-            ("Files", "files"),
+            ("Endpoints", "endpoints", ["Value", "Source"]),
+            ("URLs", "urls", ["Value", "Source"]),
+            ("Secrets", "secrets", ["Value", "Source"]),
+            ("Emails", "emails", ["Value", "Source"]),
+            ("Files", "files", ["Value", "Source"]),
+            ("Dictionary", "dictionary", ["Template", "Source"]),
         ]
-        
-        for title, key in categories:
+
+        for title, key, columns in categories:
             panel = JPanel(BorderLayout())
-            
-            # 2 columns: Value, Source
-            columns = ["Value", "Source"]
             model = NonEditableTableModel(columns, 0)
             self.models[key] = model
             
@@ -153,8 +152,8 @@ class ResultsPanel(JPanel):
         selected_source = str(self.source_filter.getSelectedItem())
         search_text = self.search_field.getText().lower().strip()
         
-        titles = ["Endpoints", "URLs", "Secrets", "Emails", "Files"]
-        keys = ["endpoints", "urls", "secrets", "emails", "files"]
+        titles = ["Endpoints", "URLs", "Secrets", "Emails", "Files", "Dictionary"]
+        keys = ["endpoints", "urls", "secrets", "emails", "files", "dictionary"]
         
         for i, (title, key) in enumerate(zip(titles, keys)):
             model = self.models[key]
@@ -189,12 +188,13 @@ class ResultsPanel(JPanel):
         s = len(self.findings.get("secrets", []))
         m = len(self.findings.get("emails", []))
         f = len(self.findings.get("files", []))
-        self.stats_label.setText("| E:%d | U:%d | S:%d | M:%d | F:%d" % (e, u, s, m, f))
+        d = len(self.findings.get("dictionary", []))
+        self.stats_label.setText("| E:%d | U:%d | S:%d | M:%d | F:%d | D:%d" % (e, u, s, m, f, d))
     
     def _get_current_table(self):
         """Get the currently visible table."""
         idx = self.tabs.getSelectedIndex()
-        keys = ["endpoints", "urls", "secrets", "emails", "files"]
+        keys = ["endpoints", "urls", "secrets", "emails", "files", "dictionary"]
         if 0 <= idx < len(keys):
             return self.tables.get(keys[idx])
         return None
@@ -202,7 +202,7 @@ class ResultsPanel(JPanel):
     def _get_current_key(self):
         """Get the current category key."""
         idx = self.tabs.getSelectedIndex()
-        keys = ["endpoints", "urls", "secrets", "emails", "files"]
+        keys = ["endpoints", "urls", "secrets", "emails", "files", "dictionary"]
         if 0 <= idx < len(keys):
             return keys[idx]
         return None
@@ -271,6 +271,7 @@ class ResultsPanel(JPanel):
                 "secrets": [f["value"] for f in self.findings.get("secrets", [])],
                 "emails": [f["value"] for f in self.findings.get("emails", [])],
                 "files": [f["value"] for f in self.findings.get("files", [])],
+                "dictionary": [f["value"] for f in self.findings.get("dictionary", [])],
             }
             
             fp = open(path, 'w')
