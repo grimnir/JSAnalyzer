@@ -37,3 +37,8 @@ test_*.js
 # Bandit cache
 .bandit
 
+
+# Internal agent/harness config (not for distribution)
+.agents/
+.codex/
+AGENTS.md
