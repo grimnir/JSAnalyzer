@@ -428,6 +428,58 @@ def _is_valid_file(value):
     return True
 
 
+# ==================== SETTINGS (pure cast helpers; §4.6) ====================
+# Actual saveExtensionSetting/loadExtensionSetting calls live in the Burp adapter.
+
+SETTING_KEYS = ('threads', 'rate', 'timeout', 'method', 'destructive', 'inscope', 'wordlist')
+
+_SETTING_DEFAULTS = {
+    'threads': 10,
+    'rate': 20.0,
+    'timeout': 10,
+    'method': 'GET',
+    'destructive': False,
+    'inscope': True,
+    'wordlist': '',
+}
+
+_ALLOWED_METHODS = frozenset(['GET', 'HEAD'])
+
+
+def cast_setting(key, raw_value):
+    """Cast a raw string (from Burp loadExtensionSetting) to the correct type.
+
+    Clamps numeric values to safe UI ceilings. Unknown keys return raw_value
+    unchanged. Pure function -- no Burp/Java imports.
+    """
+    if key == 'threads':
+        try:
+            v = int(raw_value)
+        except (ValueError, TypeError):
+            v = _SETTING_DEFAULTS['threads']
+        return max(1, min(50, v))
+    if key == 'rate':
+        try:
+            v = float(raw_value)
+        except (ValueError, TypeError):
+            v = _SETTING_DEFAULTS['rate']
+        return max(0.5, min(100.0, v))
+    if key == 'timeout':
+        try:
+            v = int(raw_value)
+        except (ValueError, TypeError):
+            v = _SETTING_DEFAULTS['timeout']
+        return max(1, min(120, v))
+    if key == 'method':
+        s = str(raw_value).upper()
+        return s if s in _ALLOWED_METHODS else 'GET'
+    if key in ('destructive', 'inscope'):
+        return str(raw_value).lower() in ('true', '1', 'yes')
+    if key == 'wordlist':
+        return str(raw_value)
+    return raw_value
+
+
 # ==================== ENGINE ====================
 
 class JSAnalyzerEngine(object):

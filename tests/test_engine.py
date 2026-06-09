@@ -647,5 +647,60 @@ class TestRelativePaths(unittest.TestCase):
             'JS file path must not be reported as relative endpoint')
 
 
+class TestSettingCasts(unittest.TestCase):
+    def setUp(self):
+        from js_analyzer_engine import cast_setting, SETTING_KEYS
+        self.cast = cast_setting
+        self.keys = SETTING_KEYS
+
+    def test_threads_int_cast(self):
+        self.assertEqual(self.cast('threads', '15'), 15)
+
+    def test_threads_clamp_max(self):
+        self.assertEqual(self.cast('threads', '999'), 50)
+
+    def test_threads_clamp_min(self):
+        self.assertEqual(self.cast('threads', '0'), 1)
+
+    def test_rate_float_cast(self):
+        self.assertAlmostEqual(self.cast('rate', '20.5'), 20.5)
+
+    def test_rate_clamp_max(self):
+        self.assertAlmostEqual(self.cast('rate', '200'), 100.0)
+
+    def test_timeout_int_cast(self):
+        self.assertEqual(self.cast('timeout', '30'), 30)
+
+    def test_method_string_upper(self):
+        self.assertEqual(self.cast('method', 'get'), 'GET')
+
+    def test_method_invalid_fallback(self):
+        self.assertEqual(self.cast('method', 'DELETE'), 'GET')
+
+    def test_destructive_true_strings(self):
+        self.assertTrue(self.cast('destructive', 'true'))
+        self.assertTrue(self.cast('destructive', '1'))
+        self.assertTrue(self.cast('destructive', 'yes'))
+
+    def test_destructive_false_strings(self):
+        self.assertFalse(self.cast('destructive', 'false'))
+        self.assertFalse(self.cast('destructive', '0'))
+        self.assertFalse(self.cast('destructive', 'no'))
+
+    def test_inscope_bool_cast(self):
+        self.assertTrue(self.cast('inscope', 'true'))
+        self.assertFalse(self.cast('inscope', 'false'))
+
+    def test_wordlist_string_passthrough(self):
+        self.assertEqual(self.cast('wordlist', '/tmp/api.txt'), '/tmp/api.txt')
+
+    def test_unknown_key_returns_raw(self):
+        self.assertEqual(self.cast('unknown_key', 'hello'), 'hello')
+
+    def test_setting_keys_contains_expected(self):
+        for k in ('threads', 'rate', 'timeout', 'method', 'destructive', 'inscope', 'wordlist'):
+            self.assertIn(k, self.keys)
+
+
 if __name__ == '__main__':
     unittest.main()
