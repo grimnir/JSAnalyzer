@@ -17,6 +17,20 @@ import os
 import inspect
 import codecs
 
+DEDUP_CAP = 50000
+
+_SETTINGS_PREFIX = 'jsa_'
+
+_SETTINGS_DEFAULTS_STR = {
+    'threads': '10',
+    'rate': '20',
+    'timeout': '10',
+    'method': 'GET',
+    'destructive': 'false',
+    'inscope': 'true',
+    'wordlist': '',
+}
+
 # Add extension directory to path so Jython can find js_analyzer_engine.py
 # and ui/results_panel.py at the same level.
 try:
@@ -32,7 +46,7 @@ if ext_dir and ext_dir not in sys.path:
     sys.path.insert(0, ext_dir)
 
 from ui.results_panel import ResultsPanel
-from js_analyzer_engine import JSAnalyzerEngine
+from js_analyzer_engine import JSAnalyzerEngine, cast_setting, SETTING_KEYS
 
 
 class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
@@ -77,10 +91,29 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
         callbacks.registerContextMenuFactory(self)
         callbacks.addSuiteTab(self)
 
+        # Load persisted settings (falls back to defaults if first run)
+        self._settings = {}
+        for k in SETTING_KEYS:
+            self._settings[k] = self._load_setting(k)
+        self._log('Settings loaded: threads=%s rate=%s timeout=%s method=%s' % (
+            self._settings['threads'], self._settings['rate'],
+            self._settings['timeout'], self._settings['method']))
+
         self._log('JS Analyzer loaded - Right-click JS responses to analyze')
 
     def _log(self, msg):
         self._stdout.println('[JS Analyzer] ' + str(msg))
+
+    def _load_setting(self, key):
+        """Load setting from Burp persistent store; fall back to default string then cast."""
+        raw = self._callbacks.loadExtensionSetting(_SETTINGS_PREFIX + key)
+        if raw is None:
+            raw = _SETTINGS_DEFAULTS_STR.get(key, '')
+        return cast_setting(key, raw)
+
+    def _save_setting(self, key, value):
+        """Persist a setting. value is Python-typed; stored as string."""
+        self._callbacks.saveExtensionSetting(_SETTINGS_PREFIX + key, str(value))
 
     def getTabCaption(self):
         return 'JS Analyzer'
@@ -139,12 +172,15 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
                 if finding:
                     new_findings.append(finding)
 
-        # secrets -- values are {'type', 'value', 'masked'};
-        # store the masked form in seen_values and display (per existing behavior)
+        # secrets -- dedup key on raw value; display masked form; thread label=type
         for secret in result['secrets']:
+            raw_value = secret['value']
             masked = secret['masked']
-            finding = self._add_finding('secrets', masked, source_name)
+            label = secret['type']
+            finding = self._add_finding('secrets', raw_value, source_name, label=label)
             if finding:
+                # Override stored value with masked form for display
+                finding['value'] = masked
                 new_findings.append(finding)
 
         # dictionary -- Phase 0: always [] so this loop is a no-op until Phase 1
@@ -159,8 +195,18 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
         else:
             self._log('No new findings')
 
-    def _add_finding(self, category, value, source):
-        """Add a finding to the global list if not already seen (dedup by key)."""
+    def _add_finding(self, category, value, source, label=None):
+        """Add a finding if not duplicate.
+
+        Dedup key: category + raw value (never masked).
+        label: pattern label string (e.g. 'AWS Key'), stored for display.
+        DEDUP_CAP guard: once seen_values reaches 50000, log once and drop.
+        """
+        if len(self.seen_values) >= DEDUP_CAP:
+            if not getattr(self, '_dedup_cap_logged', False):
+                self._log('DEDUP_CAP reached (%d); dropping further findings.' % DEDUP_CAP)
+                self._dedup_cap_logged = True
+            return None
         key = category + ':' + value
         if key in self.seen_values:
             return None
@@ -169,6 +215,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
             'category': category,
             'value': value,
             'source': source,
+            'label': label or '',
         }
         self.all_findings.append(finding)
         return finding
