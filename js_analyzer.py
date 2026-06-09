@@ -7,10 +7,11 @@ All detection logic lives in js_analyzer_engine (pure Python, no Burp deps).
 
 from burp import IBurpExtender, IContextMenuFactory, ITab
 
-from javax.swing import JMenuItem
+from javax.swing import JMenuItem, SwingUtilities
 from java.awt.event import ActionListener
 from java.util import ArrayList
 from java.io import PrintWriter
+from java.lang import Runnable as JRunnable, Thread as JThread
 
 import sys
 import os
@@ -18,6 +19,7 @@ import inspect
 import codecs
 
 DEDUP_CAP = 50000
+_BODY_CAP = 2 * 1024 * 1024   # 2 MB
 
 _SETTINGS_PREFIX = 'jsa_'
 
@@ -158,6 +160,10 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
         if len(body) < 50:
             return
 
+        if len(body) > _BODY_CAP:
+            self._log('Body truncated to 2 MB for analysis (was %d bytes)' % len(body))
+            body = body[:_BODY_CAP]
+
         self._log('Analyzing: ' + source_name)
 
         # Delegate all detection to the pure engine
@@ -191,7 +197,16 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
 
         if new_findings:
             self._log('Found %d new items' % len(new_findings))
-            self.panel.add_findings(new_findings, source_name)
+            # Marshal UI update to EDT (analyze_response runs on a worker thread)
+            panel = self.panel
+            findings_snapshot = list(new_findings)
+            source_snapshot = source_name
+
+            class _AddFindingsRunnable(JRunnable):
+                def run(self):
+                    panel.add_findings(findings_snapshot, source_snapshot)
+
+            SwingUtilities.invokeLater(_AddFindingsRunnable())
         else:
             self._log('No new findings')
 
@@ -228,19 +243,33 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
         return self.all_findings
 
 
+class _AnalyzeRunnable(JRunnable):
+    """Worker-thread body for one analysis run. Never runs on EDT."""
+    def __init__(self, extender, messages):
+        self.extender = extender
+        self.messages = messages
+
+    def run(self):
+        for msg in self.messages:
+            try:
+                self.extender.analyze_response(msg)
+            except Exception as e:
+                self.extender._log('Error analyzing response: ' + str(e))
+
+
 class AnalyzeAction(ActionListener):
     def __init__(self, extender, invocation):
         self.extender = extender
         self.invocation = invocation
 
     def actionPerformed(self, event):
+        """Called on EDT -- immediately hand off to a worker thread."""
         try:
-            messages = self.invocation.getSelectedMessages()
-            for msg in messages:
-                try:
-                    self.extender.analyze_response(msg)
-                except Exception as e:
-                    self.extender._log('Error analyzing response: ' + str(e))
+            messages = list(self.invocation.getSelectedMessages())
+            t = JThread(_AnalyzeRunnable(self.extender, messages))
+            t.setDaemon(True)
+            t.setName('JSAnalyzer-worker')
+            t.start()
         except Exception as e:
             if self.extender:
                 self.extender._log('Action error: ' + str(e))
